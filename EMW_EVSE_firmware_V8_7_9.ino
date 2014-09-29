@@ -55,7 +55,7 @@ const int V_AC_sensitivity=180; // normally 180 (empirical)
 // #define JB_WiFi_control // is this JuiceBox controllable with WiFi (through HTTP responses)
 // #define LCD_SGC // old version of the u144 LCD - used in some early JuiceBoxes
  #define PCB_83 // 8.3+ version of the PCB, includes 8.6, 8.7 versions
- #define VerStr "V8.7.9 ejw2" // detailed exact version of firmware (thanks Gregg!)
+ #define VerStr "V8.7.9 ejw 3" // detailed exact version of firmware (thanks Gregg!)
  #define GFI // need to be uncommented for GFI functionality
  #define trim120current
  #define BuzzerIndication // indicate charging states via buzzer - only on V8.7 and higher
@@ -64,6 +64,18 @@ const int V_AC_sensitivity=180; // normally 180 (empirical)
 #include <Arduino.h>
 #include <avr/interrupt.h>
 #include <avr/wdt.h>
+
+// I2C Stuff
+#include <Wire.h>
+// Possible sensor addresses (suffix correspond to DIP switch positions)
+#define SENSOR_ADDR_OFF_OFF (0x26)
+#define SENSOR_ADDR_OFF_ON (0x22)
+#define SENSOR_ADDR_ON_OFF (0x24)
+#define SENSOR_ADDR_ON_ON (0x20)
+
+// Set the sensor address here
+const uint8_t sensorAddr = SENSOR_ADDR_ON_ON;
+
 
 // EEPROM handler
 #include <EEPROM.h>
@@ -328,6 +340,13 @@ void setup() {
   // Indicate we are booting on status light
   analogWrite(pin_StatusLight, status_Low);
 
+  // Join the I2C bus as master
+  Wire.begin();
+  // Turn on the sensor by configuring pin 1 of the GPIO expander to be an
+  // output pin; the default output value is already HI so there's no need
+  // to change it
+  WriteI2CByte(sensorAddr, 0x3, 0xFE);
+
   //---------------------------------- set up timers
   cli();//stop interrupts
 
@@ -514,6 +533,10 @@ void setup() {
 void loop() {
   analogWrite(pin_StatusLight, status_Mid);
 
+  Serial.println("Top of Main loop()");
+  printTime();
+  ReadProximitySensor();
+  
   // reset GFI trip status so we can retry after GFI timeout
   // GFI is checked in the end of this cycle - by that time, a few hundreds ms pass
   GFI_tripped=0; 
@@ -644,6 +667,7 @@ void loop() {
     int savings=int(configuration.energy*savingsPerKWH/100);
     
     printTime();
+    ReadProximitySensor();
     
     if(LCD_on) {
       switch(cycleVar) {
@@ -1336,4 +1360,70 @@ void delaySecs(int secs) {
   for(int si=0; si<secs; si++) delay(1000);
 }
 
+//---------------- START of I2C Functions -----------------------------------------------
+
+// Read a byte on the i2c interface 
+int ReadI2CByte(uint8_t addr, uint8_t reg, uint8_t *data)
+{ 
+  // Do an i2c write to set the register that we want to read from 
+  Wire.beginTransmission(addr); 
+  Wire.write(reg);
+  Wire.endTransmission(); 
+
+  // Read a byte from the device
+  Wire.requestFrom(addr, (uint8_t)1); 
+  if (Wire.available()) 
+  { 
+    *data = Wire.read(); 
+  }
+  else
+  { 
+    // Read nothing back 
+    return -1; 
+  } 
+  return 0;
+} 
+
+// Write a byte on the i2c interface 
+void WriteI2CByte(uint8_t addr, uint8_t reg, byte data) 
+{ 
+  // Begin the write sequence 
+  Wire.beginTransmission(addr); 
+
+  // First byte is to set the register pointer 
+  Wire.write(reg); 
+
+  // Write the data byte 
+  Wire.write(data); 
+
+  // End the write sequence; bytes are actually transmitted now 
+  Wire.endTransmission();
+}
+
+int ReadProximitySensor()
+{
+  uint8_t val;
+  // Get the value from the sensor
+  if (ReadI2CByte(sensorAddr, 0x0, &val) == 0)
+  {
+    // The second LSB indicates if something was not detected, i.e.,
+    // LO = object detected, HI = nothing detected
+    if (val & 0x2)
+    {
+      Serial.println("Nothing detected");
+      Serial.println(val);
+    }
+    else
+    {
+      Serial.println("Object detected");
+      Serial.println(val);
+    }
+  } 
+  else
+  {
+    Serial.println("Failed to read from sensor");
+  }
+}
+
+//---------------- END of I2C Functions -----------------------------------------------
 
