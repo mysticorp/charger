@@ -57,7 +57,7 @@ const int V_AC_sensitivity=180; // normally 180 (empirical)
  #define PCB_83 // 8.3+ version of the PCB, includes 8.6, 8.7 versions
  #define VerStr "V8.7.9 ejw 3" // detailed exact version of firmware (thanks Gregg!)
  #define GFI // need to be uncommented for GFI functionality
- #define trim120current
+// #define trim120current
  #define BuzzerIndication // indicate charging states via buzzer - only on V8.7 and higher
 //------------------------------- END MAIN SWITCHES ------------------------------
 
@@ -341,11 +341,11 @@ void setup() {
   analogWrite(pin_StatusLight, status_Low);
 
   // Join the I2C bus as master
-  Wire.begin();
+  //Wire.begin();
   // Turn on the sensor by configuring pin 1 of the GPIO expander to be an
   // output pin; the default output value is already HI so there's no need
   // to change it
-  WriteI2CByte(sensorAddr, 0x3, 0xFE);
+  //WriteI2CByte(sensorAddr, 0x3, 0xFE);
 
   //---------------------------------- set up timers
   cli();//stop interrupts
@@ -533,9 +533,8 @@ void setup() {
 void loop() {
   analogWrite(pin_StatusLight, status_Mid);
 
-  Serial.println("Top of Main loop()");
-  printTime();
-  ReadProximitySensor();
+//  printTime();
+//  ReadProximitySensor();
   
   // reset GFI trip status so we can retry after GFI timeout
   // GFI is checked in the end of this cycle - by that time, a few hundreds ms pass
@@ -667,7 +666,7 @@ void loop() {
     int savings=int(configuration.energy*savingsPerKWH/100);
     
     printTime();
-    ReadProximitySensor();
+//    ReadProximitySensor();
     
     if(LCD_on) {
       switch(cycleVar) {
