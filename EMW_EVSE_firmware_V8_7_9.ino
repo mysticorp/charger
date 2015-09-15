@@ -50,7 +50,6 @@ GNU General Public License for more details: http://www.gnu.org/licenses/
 const int R_C=120; // this is the value of the shunting resistor. see datasheet for the right value. 
 const int V_AC_threshold=164; // normally 164 (midpoint between 120V and 208V
 const int V_AC_sensitivity=180; // normally 180 (empirical)
-#define JB_WiFi_simple // is WiFi installed and we are just pushing data?
 #define PCB_83 // 8.3+ version of the PCB, includes 8.6, 8.7 versions
 #define VerStr "V8.7.9 ejw 4 (9/14/2015)" // detailed exact version of firmware (thanks Gregg!)
 #define GFI // need to be uncommented for GFI functionality
@@ -118,10 +117,6 @@ const byte pin_inRelay=5;
 const byte pin_ctrlBtn_C=6; // control button 1 ("C" on the remote, receiver pin 2)
 const byte pin_ctrlBtn_D=8; // control button 2 ("D" on the remote, receiver pin 3)
 const byte pin_PWM=9; // J pilot PWM pin
-
-// pulling this pin high will trigger WPS application on the wifi module - on premium units, 
-// this is also tied to one of the buttons of the remote so no Arduino action is needed
-//const byte pin_WPS=10; // ("B" on the remote, receiver pin 1) 
 
 const byte pin_StatusLight=10;
 
@@ -226,7 +221,6 @@ void setup() {
   // set digital output pins
   pinMode(pin_PWM, OUTPUT);
   pinMode(pin_inRelay, OUTPUT);
-  // pinMode(pin_WPS, OUTPUT); // do NOT do this if there is a remote installed!
   pinMode(pin_StatusLight, OUTPUT);
   pinMode(pin_GFItest, OUTPUT);
 
