@@ -174,6 +174,9 @@ const unsigned int PWM_res=1024;
 const unsigned int PWM_FULLON=1024;
 const unsigned int MAXDUTY=970; // <97% to stay in AC charging zone for J1772 standard
 
+int sawTemp = 0;
+float lastTemp = 0;
+
 const float maxC=60; // max rated current
 float inV_AC=0; // this will be measured
 const float nominal_outC_240V=30; // 30A by default from a 240VAC line
@@ -211,6 +214,9 @@ const byte meas_cycle_delay=100; // in ms
 void setup() {
   wdt_disable();
   
+  Serial.begin(115200);
+  Serial.println("Starting Initialization");
+
   // set digital input pins
   pinMode(pin_GFI, INPUT);
   pinMode(pin_ctrlBtn_A, INPUT);
@@ -226,6 +232,8 @@ void setup() {
 
   // Indicate we are booting on status light
   analogWrite(pin_StatusLight, status_Low);
+
+  Serial.println("After Pin Initialization");
 
   //---------------------------------- set up timers
   cli();//stop interrupts
@@ -331,7 +339,23 @@ void setup() {
   // set watchdog - http://tushev.org/articles/arduino/item/46-arduino-and-watchdog-timer, http://www.nongnu.org/avr-libc/user-manual/group__avr__watchdog.html
   wdt_enable(WDTO_8S); // longest is 8S
   
-  myclrScreen();
+  // Initialize Display
+  // by default, we'll generate the high voltage from the 3.3v line internally! (neat!)
+  display.begin(SSD1306_SWITCHCAPVCC, 0x3c);  // initialize with the I2C addr 0x3D (for the 128x64)
+
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(WHITE);
+  // init done
+  
+  // Initialize RTC
+  //setSyncProvider() causes the Time library to synchronize with the
+  //external RTC by calling RTC.get() every five minutes by default.
+  setSyncProvider(RTC.get);
+  Serial.print("RTC Sync");
+  if (timeStatus() != timeSet) Serial.print(" FAIL!");
+  Serial.println("");
+
 
   // initialize in state A - EVSE ready
   setPilot(PWM_FULLON);
@@ -340,10 +364,6 @@ void setup() {
 
 //============================================= MAIN LOOP ============================================
 void loop() {
-  analogWrite(pin_StatusLight, status_Mid);
-
-//  printTime();
-//  ReadProximitySensor();
   
   // reset GFI trip status so we can retry after GFI timeout
   // GFI is checked in the end of this cycle - by that time, a few hundreds ms pass
@@ -355,7 +375,6 @@ void loop() {
   
   // manage state changes
   if(state!=prev_state) {
-    myclrScreen();
     timer=millis(); // start timer
     timer0=timer; // remember the start of charge
     
@@ -369,12 +388,13 @@ void loop() {
     }
 
     if(prev_state==STATE_C) { // exiting state C - charging
-      // store things in EEPROM so we can track total lifetime energy / savings and 
-      // also are immune to short power interruptions
       analogWrite(pin_StatusLight, status_Mid);
     }
   } // end state transition check
 
+  if(state!=STATE_C) {
+    analogWrite(pin_StatusLight, status_Mid);
+  }
 
   //-------------------------------- process states
   if(state==STATE_A) {
@@ -384,8 +404,6 @@ void loop() {
     
   if(state==STATE_B) {
     setRelay(LOW); // relay off
-    // clear part of screen
-    printJBstr(0, 12, 1, 0x1f, 0x3f, 0x1f, F("               "));    
     setOutC();
     setPilot(duty);
   }
@@ -442,6 +460,7 @@ void loop() {
       // no LCD
       sprintf(str, "%dV, %dA", int(inV_AC), int(outC));
       Serial.println(str);  
+      analogWrite(pin_StatusLight, status_Mid);
     }
 
   delay(meas_cycle_delay); // reasonable delay for screen refresh
@@ -702,12 +721,10 @@ void printJBstr(byte col, byte row, byte font, byte c1, byte c2, byte c3, const 
     Serial.println(sstr);
 }
 void printClrMsg(const __FlashStringHelper *fstr, const int del, const byte red, const byte green, const byte blue) {
-  myclrScreen();
   printJBstr(0, 2, 2, red, green, blue, fstr);      
   delay(del);
 }
 void printClrMsg(const char *str, const int del, const byte red, const byte green, const byte blue) {
-  myclrScreen();
   printJBstr(0, 2, 2, red, green, blue, str);      
   delay(del);
 }
@@ -715,12 +732,6 @@ void printErrorMsg(const __FlashStringHelper *fstr, const int del) {
   printClrMsg(fstr, 30000, 0x1f, 0x3f, 0);
 }
 
-
-// custom clear screen function. prints some header info
-void myclrScreen() {
-    Serial.println("\n");
-  printTime();
-}
 // print time etc on the first line
 void printTime() {
   // have to use tempstr here
@@ -731,20 +742,6 @@ void printTime() {
 //---------------------------- end printing help functions ------------------------
 
 //---------------------------- input control functions ----------------------------
-// this takes max of 50ms if the button is pressed
-int isBtnPressed(int pin) {
-  if(digitalRead(pin)==HIGH) {
-    // check if noise
-    for(int zz=0; zz<10; zz++) {
-      if(digitalRead(pin)==LOW) return 0;
-      delay(5);
-    }
-    return 1;
-  } else {
-    return 0;
-  }
-}
-
 byte limit(const byte value, const byte minimum, const byte maximum) {
   if(value<minimum) return minimum;
   if(value>maximum) return maximum;
