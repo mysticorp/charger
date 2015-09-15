@@ -40,23 +40,14 @@ GNU General Public License for more details: http://www.gnu.org/licenses/
 #define DEBUG2 // even more printouts
 // #define DEBUGGFI
 
-// the following results in much more frequent reporting of data by JuiceBox to EmotorWerks servers
-// PLEASE DO NOT USE in your JuiceBox UNLESS AUTHORIZED BY EMotorWerks - this overloads our servers
-// and slows down the system for everyone. JuiceBoxes that consistently report more frequently than 
-// every ~1 minute will be permanently banned from our network
-// #define DEBUG_WIFI 
-
 #define AC1075
 const int R_C=120; // this is the value of the shunting resistor. see datasheet for the right value. 
 const int V_AC_threshold=164; // normally 164 (midpoint between 120V and 208V
 const int V_AC_sensitivity=180; // normally 180 (empirical)
-// #define JB_WiFi // is WiFi installed & we are using WiFlyHQ library?
-// #define JB_WiFi_control // is this JuiceBox controllable with WiFi (through HTTP responses)
 // #define LCD_SGC // old version of the u144 LCD - used in some early JuiceBoxes
  #define PCB_83 // 8.3+ version of the PCB, includes 8.6, 8.7 versions
- #define VerStr "V8.7.9 ejw 3" // detailed exact version of firmware (thanks Gregg!)
+ #define VerStr "V8.7.9 ejw 4.5 9/15/2015" // detailed exact version of firmware (thanks Gregg!)
  #define GFI // need to be uncommented for GFI functionality
-// #define trim120current
  #define BuzzerIndication // indicate charging states via buzzer - only on V8.7 and higher
 //------------------------------- END MAIN SWITCHES ------------------------------
 
@@ -79,13 +70,6 @@ const uint8_t sensorAddr = SENSOR_ADDR_ON_ON;
 // EEPROM handler
 #include <EEPROM.h>
 #include "EEPROM_VMcharger.h"
-
-// WiFi library mega slon
-#include <SoftwareSerial.h>
-#include <WiFlyHQ.h>
-
-//-------------------- WiFi UDP settings --------------------------------------------------------------------
-const char UDPpacketEndSig[2]="\n"; // what is the signature of the packet end (should match the WiFly setting)
 
 // need this to remap PWM frequency
 #include <TimerOne.h>
@@ -133,13 +117,8 @@ const byte pin_V=1; // input voltage
 const byte pin_C=2; // AC current - as measured by the current transformer
 const byte pin_throttle=3; // wired to a trimpot on a board
 // pins A4 / A5 reserved for SPI comms to RTC chip
-#ifdef trim120current
-  const byte pin_throttle120=5; // when RTC is not used, this is an input used to set 120V target current (0-30A range)
-#endif
 
 //---------------- digital inputs / outputs
-const byte pin_sRX=2; // SoftSerial RX - used for LCD or WiFi (default)
-const byte pin_sTX=4; // SoftSerial TX - used for LCD or WiFi (default)
 // GFI trip pin - goes high on GFI fault, driven by the specialized circuit based on LM1851 
 // has to be pin 3 as only pin 2 and 3 are available for interrupts on Pro Mini
 const byte pin_GFI=3; 
@@ -147,10 +126,6 @@ const byte pin_inRelay=5;
 const byte pin_ctrlBtn_C=6; // control button 1 ("C" on the remote, receiver pin 2)
 const byte pin_ctrlBtn_D=8; // control button 2 ("D" on the remote, receiver pin 3)
 const byte pin_PWM=9; // J pilot PWM pin
-
-// pulling this pin high will trigger WPS application on the wifi module - on premium units, 
-// this is also tied to one of the buttons of the remote so no Arduino action is needed
-//const byte pin_WPS=10; // ("B" on the remote, receiver pin 1) 
 
 const byte pin_StatusLight=10;
 
@@ -250,16 +225,6 @@ unsigned int delta=0;
 
 // sensor timings
 const byte meas_cycle_delay=100; // in ms
-
-// how often to report on status
-// report in every cycle if in DEBUG mode
-#ifdef DEBUG_WIFI
-  const int type1_reportMask=10; // in standby mode, every 10 seconds
-  const int type2_reportMask=10; // in run mode, every 10 second
-#else
-  const int type1_reportMask=600; // in standby mode, every 10 minutes
-  const int type2_reportMask=60; // in run mode, every 1 minute
-#endif
 
 // start and end times by weekday
 const char *daysStr[7]={"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"};
@@ -752,18 +717,7 @@ void setOutC() {
 
   // different trimpot depending on voltage
   if(inV_AC==120) {
-#ifdef trim120current  
-    if(configuration.outC_120>0 && LCD_on) {
-      outC=configuration.outC_120;
-    } else {
-      throttle=analogRead(pin_throttle120)/1024.;
-      if(throttle>minThrottle) { // if something is set on the throttle pot, use that instead of the default outC
-        outC=throttle*nominal_outC_120V*2; // full range is 2x of nominal
-      }
-    }
-#else
     outC=min(nominal_outC_120V, outC);
-#endif
   } else {
     // 208V+ setting
     if(configuration.outC_240>0 && LCD_on) {
@@ -1203,7 +1157,6 @@ void printClrMsg(const char *str, const int del, const byte red, const byte gree
 }
 void printErrorMsg(const __FlashStringHelper *fstr, const int del) {
   printClrMsg(fstr, 30000, 0x1f, 0x3f, 0);
-  // also send a message to server if WiFI is enabled
 }
 
 
