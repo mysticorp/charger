@@ -50,61 +50,36 @@ GNU General Public License for more details: http://www.gnu.org/licenses/
 const int R_C=120; // this is the value of the shunting resistor. see datasheet for the right value. 
 const int V_AC_threshold=164; // normally 164 (midpoint between 120V and 208V
 const int V_AC_sensitivity=180; // normally 180 (empirical)
-// #define JB_WiFi // is WiFi installed & we are using WiFlyHQ library?
 #define JB_WiFi_simple // is WiFi installed and we are just pushing data?
-// #define JB_WiFi_control // is this JuiceBox controllable with WiFi (through HTTP responses)
-// #define LCD_SGC // old version of the u144 LCD - used in some early JuiceBoxes
- #define PCB_83 // 8.3+ version of the PCB, includes 8.6, 8.7 versions
- #define VerStr "V8.7.9 ejw 3" // detailed exact version of firmware (thanks Gregg!)
- #define GFI // need to be uncommented for GFI functionality
-// #define trim120current
- #define BuzzerIndication // indicate charging states via buzzer - only on V8.7 and higher
+#define PCB_83 // 8.3+ version of the PCB, includes 8.6, 8.7 versions
+#define VerStr "V8.7.9 ejw 4 (9/14/2015)" // detailed exact version of firmware (thanks Gregg!)
+#define GFI // need to be uncommented for GFI functionality
 //------------------------------- END MAIN SWITCHES ------------------------------
 
 #include <Arduino.h>
 #include <avr/interrupt.h>
 #include <avr/wdt.h>
 
-// I2C Stuff
+// Additions for use of Adafruit display and DS3223RTC
+#include <SPI.h>
 #include <Wire.h>
-// Possible sensor addresses (suffix correspond to DIP switch positions)
-#define SENSOR_ADDR_OFF_OFF (0x26)
-#define SENSOR_ADDR_OFF_ON (0x22)
-#define SENSOR_ADDR_ON_OFF (0x24)
-#define SENSOR_ADDR_ON_ON (0x20)
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
 
-// Set the sensor address here
-const uint8_t sensorAddr = SENSOR_ADDR_ON_ON;
+#include <DS3232RTC.h>        //http://github.com/JChristensen/DS3232RTC
+#include <Streaming.h>        //http://arduiniana.org/libraries/streaming/
+#include <Time.h>             //http://playground.arduino.cc/Code/Time
 
+#define OLED_RESET 4
+Adafruit_SSD1306 display(OLED_RESET);
 
 // EEPROM handler
 #include <EEPROM.h>
 #include "EEPROM_VMcharger.h"
 
-// WiFi library mega slon
-#include <SoftwareSerial.h>
-#include <WiFlyHQ.h>
-
-//-------------------- WiFi UDP settings --------------------------------------------------------------------
-const char UDPpacketEndSig[2]="\n"; // what is the signature of the packet end (should match the WiFly setting)
 
 // need this to remap PWM frequency
 #include <TimerOne.h>
-
-// our LCD library for 4D systems display (http://www.4dsystems.com.au/prod.php?id=121)
-// 4D Systems in its infinite wisdom decided to completely change the command set in its new 
-// release of the LCDs so we (and other countless developers) had to completely rewrite our
-// LCD libraries
-#ifdef LCD_SGC
-  #include <uLCD_144.h>
-  uLCD_144 *myLCD;
-#else
-  #include <uLCD_144_SPE.h>
-  uLCD_144_SPE *myLCD;
-#endif
-
-byte LCD_on=0; // this defines base vs. premium versions
-byte REMOTE_ON=0; // this tells us if a remote is present or not
 
 //------------------ current sensor calibration - only for AC1075 for now -----------------------------------------------
 // the current sensing is done using a simple diode rectifier. As such, there is natural non-linearity to readings
@@ -134,13 +109,8 @@ const byte pin_V=1; // input voltage
 const byte pin_C=2; // AC current - as measured by the current transformer
 const byte pin_throttle=3; // wired to a trimpot on a board
 // pins A4 / A5 reserved for SPI comms to RTC chip
-#ifdef trim120current
-  const byte pin_throttle120=5; // when RTC is not used, this is an input used to set 120V target current (0-30A range)
-#endif
 
 //---------------- digital inputs / outputs
-const byte pin_sRX=2; // SoftSerial RX - used for LCD or WiFi (default)
-const byte pin_sTX=4; // SoftSerial TX - used for LCD or WiFi (default)
 // GFI trip pin - goes high on GFI fault, driven by the specialized circuit based on LM1851 
 // has to be pin 3 as only pin 2 and 3 are available for interrupts on Pro Mini
 const byte pin_GFI=3; 
@@ -157,9 +127,6 @@ const byte pin_StatusLight=10;
 
 const byte pin_ctrlBtn_A=11; // control button 3 ("A" on the remote, receiver pin 0) 
 const byte pin_GFItest=12; // pin wired to a GFCI-tripping relay - for the periodic testing of the GFCI circuit & stuck relay detection
-#ifdef BuzzerIndication
-  const byte pin_buzzer=13; // 2kHz buzzer for audio signal (8.7 boards have a bug in wiring of buzzer - drilling is needed so by default the buzzer is not installed)
-#endif
 //---------------- END PINOUTS -----------------------
 
 //---------------- Status Light Levels ---------------
@@ -168,22 +135,6 @@ const byte status_Low=10;
 const byte status_Mid=128;
 const byte status_Full=255;
 //---------------- End Status Light Levels -----------------------
-
-
-//============= NON-VOLATILE INFO  =====
-struct config_t {
-  unsigned long energy; // total energy during lifetime, in kWHr - assuming 100kwhrs every day, we need long here
-  byte day;
-  byte hour;
-  byte mins;
-  // IDs for linking the JB to customer's account - a bunch of random ints
-  unsigned int IDstamp[10]; 
-  byte outC_240; // current setting for 240V
-  byte outC_120; // current setting for 120V
-  byte starttime[2]; 
-  byte endtime[2]; 
-} configuration;
-//=======================================
 
 //==================================== calibration constants etc
 const float Aref=5.; // should be close
@@ -237,7 +188,6 @@ char tempstr[24]; // scratchpad for text operations
 byte GFI_tripped=0;
 byte GFI_trip_count=0;
 
-byte cycleVar=0;
 int state=-1, prev_state=-1;
 int min2nextrun;
 // ------------- end global vars ---------------------------
@@ -252,71 +202,11 @@ unsigned int delta=0;
 // sensor timings
 const byte meas_cycle_delay=100; // in ms
 
-// how often to report on status
-// report in every cycle if in DEBUG mode
-#ifdef DEBUG_WIFI
-  const int type1_reportMask=10; // in standby mode, every 10 seconds
-  const int type2_reportMask=10; // in run mode, every 10 second
-#else
-  const int type1_reportMask=600; // in standby mode, every 10 minutes
-  const int type2_reportMask=60; // in run mode, every 1 minute
-#endif
-
 // start and end times by weekday
-const char *daysStr[7]={"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"};
+//const char *daysStr[7]={"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"};
 // initialize the clock - assume no RTC and that we are getting turned on at the hour
-byte day=5, hour=12, mins=0; // default day is Sat, time is noon, 0 min
+//byte day=5, hour=12, mins=0; // default day is Sat, time is noon, 0 min
 //------------ end timing params ---------------------------
-
-
-#ifdef JB_WiFi_simple
-  SoftwareSerial wifiSerial(pin_sRX, pin_sTX);
-#endif
-
-#ifdef JB_WiFi
-  SoftwareSerial wifiSerial(pin_sRX, pin_sTX);
-  WiFly wifly;
-#endif
-
-
-//-------------------------------------- BUZZER CODE -----------------------------------------------------
-int tmr2cnt = 0;
-int tmr2cnt2 = 0;
-int tmr2th=0; // this defines frequency of beeps; 0 disables the beeps altogether
-
-ISR(TIMER2_COMPA_vect) { //timer2 interrupt 8kHz toggles pin
-  tmr2cnt++;
-  tmr2cnt2++;
-  
-  if(tmr2cnt==8000) {
-    tmr2cnt=0;
-    sec_up++; // uptime
-    wdt_reset(); // pat the dog 1/sec
-  }
-
-#ifdef BuzzerIndication
-  // disable buzzer by this one
-  if(tmr2th==0) {
-    digitalWrite(pin_buzzer, LOW);
-    return;
-  }
-  
-  if(tmr2cnt2>tmr2th/2) {
-    if((tmr2cnt2%16)==14) {
-      digitalWrite(pin_buzzer,HIGH);
-    }      
-    if((tmr2cnt2%16)==15) {
-      digitalWrite(pin_buzzer,LOW);
-    }
-  } else {
-    digitalWrite(pin_buzzer,LOW);
-  }
-  
-  if(tmr2cnt2>tmr2th) tmr2cnt2=0; // reset to zero on overflow
-#endif
-}
-//-------------------------------------- END BUZZER CODE -------------------------------------------------
-
 
 void setup() {
   wdt_disable();
@@ -333,19 +223,9 @@ void setup() {
   // pinMode(pin_WPS, OUTPUT); // do NOT do this if there is a remote installed!
   pinMode(pin_StatusLight, OUTPUT);
   pinMode(pin_GFItest, OUTPUT);
-#ifdef BuzzerIndication
-  pinMode(pin_buzzer, OUTPUT);
-#endif
 
   // Indicate we are booting on status light
   analogWrite(pin_StatusLight, status_Low);
-
-  // Join the I2C bus as master
-  //Wire.begin();
-  // Turn on the sensor by configuring pin 1 of the GPIO expander to be an
-  // output pin; the default output value is already HI so there's no need
-  // to change it
-  //WriteI2CByte(sensorAddr, 0x3, 0xFE);
 
   //---------------------------------- set up timers
   cli();//stop interrupts
@@ -370,77 +250,6 @@ void setup() {
 
   sei();
   //---------------------------------- end timer setup
-  
-  //================= initialize the display ===========================================
-#ifdef LCD_SGC
-  *myLCD=uLCD_144(9600);
-#else
-  *myLCD=uLCD_144_SPE(9600);
-#endif
-  //================= finish display init ==============================================
-
-  // check if the display started / is present
-  // if not present, we will assume this is the Base edition
-  LCD_on=myLCD->isAlive();
-  
-#ifdef JB_WiFi_simple 
-  wifiSerial.begin(9600);
-#endif
-
-  // the time settings only valid in the PREMIUM edition
-  // load day/hour from the configuration (EEPROM)
-  EEPROM_readAnything(0, configuration);
-  // reset to defaults if this is a first run OR an 'A' button is pressed on power-up
-  if(int(configuration.energy)<0 || isBtnPressed(pin_ctrlBtn_A)) {
-    configuration.energy=0;
-    // set defaults for time of use
-    configuration.starttime[0]=configuration.starttime[1]=0; // starting at midnight
-    configuration.endtime[0]=24; // no time of day by default
-    configuration.endtime[1]=24; // no time of day by default
-    configuration.day=day;
-    configuration.hour=hour;
-    configuration.mins=mins;
-    configuration.outC_240=30;
-    configuration.outC_120=15;
-  } else {
-    day=configuration.day;
-    hour=configuration.hour;
-    mins=configuration.mins; 
-  }
-  if(int(configuration.IDstamp[0])<0) {
-    randomSeed(analogRead(6)+int(micros())); // this should be random enough
-    for(byte iii=0; iii<10; iii++) {
-      configuration.IDstamp[iii]=random(9999);
-    }
-  }
-  
-  day=limit(day, 0, 6);
-  hour=limit(hour, 0, 23);
-  mins=limit(mins, 0, 60);
-
-  // will need to add pull of the true RTC time from a WiFi module here 
-#ifdef JB_WiFi_simple
-  // enter command mode, run 'get time'
-#endif
-    
-  // set the clock offset; later in code, #of sec from midnight can be calculated as
-  //     sec_up-clock_offset
-  clock_offset=sec_up-long(day*24+hour)*3600-long(mins)*60; 
-  
-  if(LCD_on) { // this is a PREMIUM edition with LCD
-    myLCD->setOpacity(1);
-    myLCD->setMode(1); // reverse landscape
-
-    printClrMsg(F("Thank You for\nchoosing \nJ.u.i.c.e B.o.x !!!"), 5000, 0, 0x3f, 0);
-  }
-  
-  // auto-sense the remote
-  // button D pin is set as INPUT_PULLUP - this means that if there is no remote, it will read '1'
-  // if there IS a remote, AND button D is NOT pressed at startup (why would it?), 
-  // this input should be at zero
-  if(!digitalRead(pin_ctrlBtn_D)) REMOTE_ON=1; 
-  
-  EEPROM_writeAnything(0, configuration);
 
   //---------------------------- calibrate state boundaries ---------------------------------------------
   // first, need to record a minimum value of the wave - needed for pilot voltage measurement later on
@@ -562,11 +371,6 @@ void loop() {
     if(prev_state==STATE_C) { // exiting state C - charging
       // store things in EEPROM so we can track total lifetime energy / savings and 
       // also are immune to short power interruptions
-      configuration.energy+=energy; // keep track of the total energy transmitted through the EVSE
-      configuration.day=dayOfWeek();
-      configuration.hour=hourOfDay();
-      configuration.mins=minsOfHour();
-      EEPROM_writeAnything(0, configuration);
       analogWrite(pin_StatusLight, status_Mid);
     }
   } // end state transition check
@@ -580,18 +384,10 @@ void loop() {
     
   if(state==STATE_B) {
     setRelay(LOW); // relay off
-    // check if we are ok to run - but ONLY if there is a remote control to allow override
-    min2nextrun=timeToNextRun();
-    if(min2nextrun>0 && !isBtnPressed(pin_ctrlBtn_C) && REMOTE_ON) { 
-      sprintf(str, "Wait %d min    ", min2nextrun); 
-      printJBstr(0, 12, 1, 0x1f, 0x3f, 0x1f, str);  
-      setPilot(PWM_FULLON);
-    } else {
-      // clear part of screen
-      printJBstr(0, 12, 1, 0x1f, 0x3f, 0x1f, F("               "));    
-      setOutC();
-      setPilot(duty);
-    }
+    // clear part of screen
+    printJBstr(0, 12, 1, 0x1f, 0x3f, 0x1f, F("               "));    
+    setOutC();
+    setPilot(duty);
   }
     
   if(state==STATE_C) {
@@ -624,23 +420,6 @@ void loop() {
         
     // print button menu
     printJBstr(0, 9, 2, 0, 0, 0x1f, F("A=outC+, D=outC- \nB=WPS")); 
-    if(isBtnPressed(pin_ctrlBtn_A)) {
-      if(inV_AC>160) configuration.outC_240++;
-      else configuration.outC_120++;
-    }
-    if(isBtnPressed(pin_ctrlBtn_D)) {
-      if(inV_AC>160) configuration.outC_240--;
-      else configuration.outC_120--;
-    }
-
-    // send out a report to MotherShip via WiFi if on
-#ifdef JB_WiFi_simple
-    if( int(sec_up-timer_sec) > type2_reportMask ) {
-      timer_sec=sec_up;
-      sprintf(str, "V%d,L%d,E%d,A%d,P%d", int(inV_AC), int(configuration.energy+energy), int(energy*10), int(outC_meas*10), int(power*10));
-      sendWiFiMsg(str);
-    }
-#endif    
   } // end state_C
   
   if(state==STATE_D) {
@@ -654,79 +433,16 @@ void loop() {
   }  
           
   // display standby
-  if(state==STATE_A || state==STATE_B) {
-    // load configuration - holding total energy and calibration constants
-    // need to load here in loop() function as things will be written at end of each charge and we need to reload
-    EEPROM_readAnything(0, configuration);
-  
-    // set the output current - can be changed by trimpot or remote without a restart
-    // need this here so we have an echo on user input
-    setOutC(); 
-    
-    int savings=int(configuration.energy*savingsPerKWH/100);
-    
-    printTime();
-//    ReadProximitySensor();
-    
-    if(LCD_on) {
-      switch(cycleVar) {
-        case 2:
-          cycleVar=0;
-        case 0:
-          myLCD->printStr(0, 2, 2, 0x1f, 0x3f, 0, F("READY -   "));
-          break;
-        case 1:
-          myLCD->printStr(0, 2, 2, 0x1f, 0x3f, 0, F("READY |   "));
-          break;
-        default: break;
-      }
-      cycleVar++;
-  
-      // output some key standby info - this is the default screen before charging commences
-      sprintf(str, "Life: %d KWH", int(configuration.energy)); myLCD->printStr(0, 4, 2, 0, 0x3f, 0x1f, str);
-      sprintf(str, "Saved: %d$", savings); myLCD->printStr(0, 5, 2, 0, 0x3f, 0x1f, str);
-      sprintf(str, "Last: %d.%01d KWH", int(energy), int(energy*10)%10); myLCD->printStr(0, 7, 2, 0x1f, 0, 0x1f, str);
-      sprintf(str, "Set: %dV, %dA    ", int(inV_AC), int(outC)); myLCD->printStr(0, 8, 2, 0x1f, 0x3f, 0x1f, str);
-  #ifdef DEBUG2
-      int reading=analogRead(pin_C);
-      delay(8);
-      reading+=analogRead(pin_C);
-      sprintf(str, "A2:%d=%dA  ", int(reading*5./2/10.24), int(read_C()*10)); myLCD->printStr(0, 9, 2, 0x1f, 0x3f, 0x1f, str);
-      delay(500); // before overwriting below
-  #endif
-  
-      // print button menu
-      printJBstr(0, 10, 2, 0, 0, 0x1f, F("A=MENU, B=WPS \nC=FORCE START")); 
+  if(state==STATE_A || state==STATE_B) {  
+      // set the output current - can be changed by trimpot or remote without a restart
+      // need this here so we have an echo on user input
+      setOutC(); 
       
-      if(isBtnPressed(pin_ctrlBtn_A)) ctrlMenu();
-  
-    } else {
-      
+       printTime();
       // no LCD
       sprintf(str, "%dV, %dA", int(inV_AC), int(outC));
-      Serial.println(str);
-  #ifdef DEBUG
-      // print ID - only in non-LCD mode so not to clutter anything
-      for(int iii=0; iii<10; iii++) {
-        Serial.print(configuration.IDstamp[iii]); // 10-50 digit ID - unique to each JuiceBox
-      }
-      Serial.println();
-      sprintf(str, "    pilot=%d, inACpin=%d", int(V_J1772_pin_*1000), int(analogRead(pin_V)*Aref));
-      Serial.println(str);
-  #endif
-  
+      Serial.println(str);  
     }
-    
-    // send out a report to MotherShip via WiFi if WiFi is enabled
-  #ifdef JB_WiFi_simple
-    if( int(sec_up-timer_sec) > type1_reportMask ) {
-      timer_sec=sec_up; // reset start of timer
-      sprintf(str, "V%d,L%d,S%d", int(inV_AC), configuration.energy, savings);
-      sendWiFiMsg(str);
-    }
-  #endif
-  
-  }
 
   delay(meas_cycle_delay); // reasonable delay for screen refresh
 
@@ -789,28 +505,13 @@ void setOutC() {
 
   // different trimpot depending on voltage
   if(inV_AC==120) {
-#ifdef trim120current  
-    if(configuration.outC_120>0 && LCD_on) {
-      outC=configuration.outC_120;
-    } else {
-      throttle=analogRead(pin_throttle120)/1024.;
-      if(throttle>minThrottle) { // if something is set on the throttle pot, use that instead of the default outC
-        outC=throttle*nominal_outC_120V*2; // full range is 2x of nominal
-      }
-    }
-#else
     outC=min(nominal_outC_120V, outC);
-#endif
   } else {
     // 208V+ setting
-    if(configuration.outC_240>0 && LCD_on) {
-      outC=configuration.outC_240;
-    } else {    
       throttle=analogRead(pin_throttle)/1024.;
       if(throttle>minThrottle) { // if something is set on the throttle pot, use that instead of the default outC
         outC=throttle*maxC;
       }
-    }
   }
 
   // per J1772 standard:
@@ -991,242 +692,14 @@ float read_C() {
 #endif
 }
 
-
-//------------------------------ control MENUs -----------------------------------------
-// this is generally called by pressing 'A' button on the remote
-void ctrlMenu() {
-  byte pos=0; // current position
-  const byte state_MENU=0xFF;
-  const byte state_EXIT=0x00;
-  const byte state_OUTC=0x01;
-  const byte state_PRINTID=0x02;
-  const byte state_TIME=0x03;
-  const byte state_TIMEOFCHARGE_W_S=0x04;
-  const byte state_CAL_C=0x05;
-  const byte state_CAL_V=0x06;
-  const byte maxpos=4; // index of the last valid menu item
-
-  const byte state_TIMEOFCHARGE_W_E=0x41;
-  const byte state_TIMEOFCHARGE_WE_S=0x42;
-  const byte state_TIMEOFCHARGE_WE_E=0x43;
-  
-  byte mstate=state_MENU;
-  byte prev_mstate=99;
-  byte btn=0xFF; // which button was pressed - this will be set to the pin number
-  byte x=0; // target position / variable
-  
-  while(1) {
-    if(mstate!=prev_mstate) {
-      myclrScreen();
-      btn=0xFF; // reset button state
-    } else {
-      // block for button if the state is the same 
-      btn=waitForBtn();
-    }
-    prev_mstate=mstate;
-    
-    switch(mstate) {
-      case state_MENU:
-        // show menu
-        pos=0;
-        if(btn==pin_ctrlBtn_A) {
-          if(x==0) {
-            x=maxpos;
-          } else {
-            x--;
-          }
-        }
-        if(btn==pin_ctrlBtn_D) x++;
-        // by this time, pos=<number of menu entries>
-        if(x>maxpos) x=0; // wrap around to top
-        printJBstr(0, 2+pos, 2, 0, ( x==pos ? 0x3f : 0x1f ), 0, F("EXIT")); pos++;
-        printJBstr(0, 2+pos, 2, 0, ( x==pos ? 0x3f : 0x1f ), 0, F("SET CURRENT")); pos++;
-        printJBstr(0, 2+pos, 2, 0, ( x==pos ? 0x3f : 0x1f ), 0, F("PRINT ID")); pos++;
-        printJBstr(0, 2+pos, 2, 0, ( x==pos ? 0x3f : 0x1f ), 0, F("SET CLOCK")); pos++;
-        printJBstr(0, 2+pos, 2, 0, ( x==pos ? 0x3f : 0x1f ), 0, F("SET TIME OF USE")); pos++;
-        if(btn==pin_ctrlBtn_C) mstate=x;
-        break;
-      
-      case state_EXIT:
-        return;
-        break; 
-      
-      case state_OUTC:
-        // set output curent 
-        if(btn==pin_ctrlBtn_A) outC++;
-        if(btn==pin_ctrlBtn_D) outC--;
-        sprintf(str, "Setting for \noutV=%dV ", int(inV_AC));
-        printJBstr(0, 2, 2, 0x1f, 0x3f, 0x1f, str);
-        sprintf(str, "outC: %dA ", int(outC));
-        printJBstr(0, 5, 2, 0x1f, 0x3f, 0, str);
-        if(btn==pin_ctrlBtn_C) {
-          if(inV_AC==120) {
-            configuration.outC_120=outC;
-          } else {
-            configuration.outC_240=outC;
-          }
-          // need to write to config the new value
-          EEPROM_writeAnything(0, configuration);
-
-          mstate=state_MENU; // back to menu
-        }
-        break;      
-      
-      case state_PRINTID:
-        // print JuiceBox ID if requested - required to associate the JuiceBox with online account
-        // this is button D on the remote!
-        for(int iii=0; iii<5; iii++) {
-          sprintf(str, "%u %u", configuration.IDstamp[iii*2], configuration.IDstamp[iii*2+1]);
-          printJBstr(0, 2+iii, 1, 0x1f, 0x3f, 0x1f, str);
-        }  
-        if(btn==pin_ctrlBtn_C) mstate=state_MENU;
-        break;
-
-      case state_TIME:
-        // setting time
-        day=dayOfWeek();
-        hour=hourOfDay();
-        mins=minsOfHour();
-        // user setup of the day - 0=Monday
-        printClrMsg(F("Set day:\n'A' to change,\n'C' to select"), 50, 0, 0x3f, 0);
-        myLCD->printStr(0, 6, 2, 0x1f, 0x1f, 0, daysStr[day]); // print starting point
-        while(1) {
-          if(isBtnPressed(pin_ctrlBtn_A)) {
-            day++;
-            if(day>6) day=0;
-            myLCD->printStr(0, 6, 2, 0x1f, 0x1f, 0, daysStr[day]);
-            delay(100); // avoid double-button-press
-          }
-          if(isBtnPressed(pin_ctrlBtn_C)) {
-            while(isBtnPressed(pin_ctrlBtn_C));
-            break; // exit on timeout
-          }
-          delay(50);
-        }      
-        // user setup of the time - in 24 hour clock
-        printClrMsg(F("Set time:\n'A' to change,\n'C' to select"), 50, 0, 0x3f, 0);
-        sprintf(str, "Hour: %02d  ", hour); myLCD->printStr(0, 7, 2, 0x1f, 0x1f, 0, str); // print starting point
-        while(1) {
-          if(isBtnPressed(pin_ctrlBtn_A)) {
-            hour++;
-            if(hour>23) hour=0;
-            sprintf(str, "Hour: %02d  ", hour); myLCD->printStr(0, 7, 2, 0x1f, 0x1f, 0, str); // print starting point
-            delay(100); // avoid double-button-press
-          }
-          if(isBtnPressed(pin_ctrlBtn_C)) {
-            while(isBtnPressed(pin_ctrlBtn_C));
-            break; // exit on timeout
-          }
-          delay(50);
-        }
-        sprintf(str, "Minute: %02d  ", mins); myLCD->printStr(0, 7, 2, 0x1f, 0x1f, 0, str); // print starting point
-        while(1) {
-          if(isBtnPressed(pin_ctrlBtn_A)) {
-            mins++;
-            if(mins>59) mins=0; // 60 minutes in an hour
-            sprintf(str, "Minute: %02d  ", mins); myLCD->printStr(0, 7, 2, 0x1f, 0x1f, 0, str); // print starting point
-            delay(100); // avoid double-button-press
-          }
-          if(isBtnPressed(pin_ctrlBtn_C)) {
-            break; // exit on timeout
-          }
-          delay(50);
-        }        
-        // reset the clock offset
-        clock_offset=sec_up-long(day*24+hour)*3600-mins*60; 
-        
-        // store current date & time in EEPROM
-        configuration.day=day;
-        configuration.hour=hour;
-        configuration.mins=mins;
-        EEPROM_writeAnything(0, configuration);
-        
-        mstate=state_MENU;
-        break;
-
-      case state_TIMEOFCHARGE_W_S:
-        // setting allowed time of charge
-        myLCD->printStr(0, 6, 2, 0x1f, 0x3f, 0x1f, F("Set all to 0-24 to\ndisable timer"));
-        // allow editing 2 types of days (weekday & weekend), start and end time for every type
-        if(btn==pin_ctrlBtn_A && configuration.starttime[0]<23) configuration.starttime[0]++; // operate on Monday's time
-        if(btn==pin_ctrlBtn_D && configuration.starttime[0]>0) configuration.starttime[0]--;
-        sprintf(str, "Weekday:\nstart charge\n\n %02d:00 ", configuration.starttime[0]); 
-        myLCD->printStr(0, 2, 2, 0, 0x3f, 0, str);
-        if(btn==pin_ctrlBtn_C) mstate=state_TIMEOFCHARGE_W_E;
-        break;
-      case state_TIMEOFCHARGE_W_E:
-        // setting allowed time of charge
-        // allow editing 2 types of days (weekday & weekend), start and end time for every type
-        if(btn==pin_ctrlBtn_A && configuration.endtime[0]<24) configuration.endtime[0]++; // operate on Monday's time, allow to go to 24th hour
-        if(btn==pin_ctrlBtn_D && configuration.endtime[0]>0) configuration.endtime[0]--;
-        sprintf(str, "Weekday:\nend charge\n\n %02d:00 ", configuration.endtime[0]); 
-        myLCD->printStr(0, 2, 2, 0, 0x3f, 0, str);
-        if(btn==pin_ctrlBtn_C) mstate=state_TIMEOFCHARGE_WE_S;
-        break;
-      case state_TIMEOFCHARGE_WE_S:
-        // setting allowed time of charge
-        // allow editing 2 types of days (weekday & weekend), start and end time for every type
-        if(btn==pin_ctrlBtn_A && configuration.starttime[1]<23) configuration.starttime[1]++; // operate on Saturday's time
-        if(btn==pin_ctrlBtn_D && configuration.starttime[1]>0) configuration.starttime[1]--; 
-        sprintf(str, "WeekEND\nstart charge\n\n %02d:00 ", configuration.starttime[1]); 
-        myLCD->printStr(0, 2, 2, 0, 0x3f, 0, str);
-        if(btn==pin_ctrlBtn_C) mstate=state_TIMEOFCHARGE_WE_E;
-        break;
-      case state_TIMEOFCHARGE_WE_E:
-        // setting allowed time of charge
-        // allow editing 2 types of days (weekday & weekend), start and end time for every type
-        if(btn==pin_ctrlBtn_A && configuration.endtime[1]<24) configuration.endtime[1]++; // operate on Saturday's time, allow to go to 24th hour
-        if(btn==pin_ctrlBtn_D && configuration.endtime[1]>0) configuration.endtime[1]--; 
-        sprintf(str, "WeekEND\nend charge\n\n %02d:00 ", configuration.endtime[1]); 
-        myLCD->printStr(0, 2, 2, 0, 0x3f, 0, str);
-        if(btn==pin_ctrlBtn_C) {
-          // write out into the EEPROM config 
-          EEPROM_writeAnything(0, configuration);    
-          mstate=state_MENU;
-        }
-        break;
-
-      default: 
-        break;
-    }
-    
-    // print button menu
-    printJBstr(0, 9, 2, 0, 0, 0x1f, F("A=UP, D=DOWN \nB=WPS, C=SELECT"));    
-
-    // delay(50); // some short delay between re-renderings
-  }
-}
-
-// process remote button presses
-// this is a BLOCKING call
-byte waitForBtn() {
-  while(1) {
-    if(isBtnPressed(pin_ctrlBtn_A)) return pin_ctrlBtn_A;
-    // no B button - reserved for WPS
-    if(isBtnPressed(pin_ctrlBtn_C)) return pin_ctrlBtn_C;
-    if(isBtnPressed(pin_ctrlBtn_D)) return pin_ctrlBtn_D;
-    delay(10); // very small delay to not overload CPU too much
-  }
-}
-//------------------------------ END control MENUs -------------------------------------
-
-
 //------------------------------ printing help functions -------------------------
 void printJBstr(byte col, byte row, byte font, byte c1, byte c2, byte c3, const __FlashStringHelper *fstr) {
-  if(LCD_on) {
-    myLCD->printStr(col, row, font, c1, c2, c3, fstr);
-  } else {
     Serial.print("    ");
     Serial.println(fstr);
-  }
 }
 void printJBstr(byte col, byte row, byte font, byte c1, byte c2, byte c3, const char *sstr) {
-  if(LCD_on) {
-    myLCD->printStr(col, row, font, c1, c2, c3, sstr);
-  } else {
     Serial.print("    ");
     Serial.println(sstr);
-  }
 }
 void printClrMsg(const __FlashStringHelper *fstr, const int del, const byte red, const byte green, const byte blue) {
   myclrScreen();
@@ -1240,58 +713,21 @@ void printClrMsg(const char *str, const int del, const byte red, const byte gree
 }
 void printErrorMsg(const __FlashStringHelper *fstr, const int del) {
   printClrMsg(fstr, 30000, 0x1f, 0x3f, 0);
-  // also send a message to server if WiFI is enabled
-#ifdef JB_WiFi_simple
-  sendWiFiMsg(fstr, 1);
-#endif
 }
 
 
 // custom clear screen function. prints some header info
 void myclrScreen() {
-  if(LCD_on) {
-    myLCD->clrScreen();
-  } else {
     Serial.println("\n");
-  }
   printTime();
 }
 // print time etc on the first line
 void printTime() {
   // have to use tempstr here
-  sprintf(tempstr, "%s %02d:%02d (%d) ", VerStr, hourOfDay(), minsOfHour(), state); 
+  sprintf(tempstr, "%s", VerStr);
+//  sprintf(tempstr, "%s %02d:%02d (%d) ", VerStr, hourOfDay(), minsOfHour(), state); 
   printJBstr(0, 0, 2, 0x1f, 0, 0x1f, tempstr);     
 }
-
-
-#ifdef JB_WiFi_simple
-//==================== WIFI messaging functions ===============================================
-void sendWiFiMsg(char *str) {
-  // print out the packet
-  // ID first
-  for(int iii=0; iii<10; iii++) {
-    wifiSerial.print(configuration.IDstamp[iii]); // 10-50 digit ID - unique to each JuiceBox
-  }
-  wifiSerial.print(":");
-  // print data now
-  wifiSerial.print(str);
-  wifiSerial.print(":");
-  wifiSerial.println(UDPpacketEndSig);
-}
-void sendWiFiMsg(const __FlashStringHelper *fstr, int dummy) {
-  // print out the packet
-  // ID first
-  for(int iii=0; iii<10; iii++) {
-    wifiSerial.print(configuration.IDstamp[iii]); // 10-50 digit ID - unique to each JuiceBox
-  }
-  wifiSerial.print(":");
-  // print data now
-  wifiSerial.print(fstr);
-  wifiSerial.print(":");
-  wifiSerial.println(UDPpacketEndSig);
-}
-//===================== END WiFi messaging functions ===========================================
-#endif
 //---------------------------- end printing help functions ------------------------
 
 //---------------------------- input control functions ----------------------------
@@ -1308,38 +744,6 @@ int isBtnPressed(int pin) {
     return 0;
   }
 }
-
-//---------------- timing functions -----------------------------------------------
-// time in minutes to the next run
-int timeToNextRun() {
-  byte day=dayOfWeek();
-  byte hour=hourOfDay();
-  byte day_index=day<5?0:1;
-  byte nextDay_index=day_index;
-  if(day==4) nextDay_index=1; // weekend after Fri
-  if(day==6) nextDay_index=0; // weekday after Sun
-  
-  if(hour<configuration.starttime[day_index]) return (configuration.starttime[day_index]-hour)*60;
-  if(hour<configuration.endtime[day_index]) return -1; // here, hour is > starttime, so if hour is also < endtime, can go now
-  return (configuration.starttime[nextDay_index]-hour+24)%24*60-minsOfHour(); // here, hour is > endtime, so calc to next day
-}
-
-// determine day of week
-byte dayOfWeek() {
-  return (byte)(((sec_up-clock_offset)/24/3600)%7);
-}
-// determine hour of day
-byte hourOfDay() {
-  return (byte)(((sec_up-clock_offset)/3600)%24);
-}
-// determine minutes of hour
-byte minsOfHour() {
-  return (byte)(((sec_up-clock_offset)/60)%60);
-}
-
-// need some RTC functions here...
-
-//---------------- END timing functions -----------------------------------------------
 
 byte limit(const byte value, const byte minimum, const byte maximum) {
   if(value<minimum) return minimum;
@@ -1358,71 +762,4 @@ void getSavingsPerKWH(int gascost, int mpg, int ecost, int whpermile) {
 void delaySecs(int secs) {
   for(int si=0; si<secs; si++) delay(1000);
 }
-
-//---------------- START of I2C Functions -----------------------------------------------
-
-// Read a byte on the i2c interface 
-int ReadI2CByte(uint8_t addr, uint8_t reg, uint8_t *data)
-{ 
-  // Do an i2c write to set the register that we want to read from 
-  Wire.beginTransmission(addr); 
-  Wire.write(reg);
-  Wire.endTransmission(); 
-
-  // Read a byte from the device
-  Wire.requestFrom(addr, (uint8_t)1); 
-  if (Wire.available()) 
-  { 
-    *data = Wire.read(); 
-  }
-  else
-  { 
-    // Read nothing back 
-    return -1; 
-  } 
-  return 0;
-} 
-
-// Write a byte on the i2c interface 
-void WriteI2CByte(uint8_t addr, uint8_t reg, byte data) 
-{ 
-  // Begin the write sequence 
-  Wire.beginTransmission(addr); 
-
-  // First byte is to set the register pointer 
-  Wire.write(reg); 
-
-  // Write the data byte 
-  Wire.write(data); 
-
-  // End the write sequence; bytes are actually transmitted now 
-  Wire.endTransmission();
-}
-
-int ReadProximitySensor()
-{
-  uint8_t val;
-  // Get the value from the sensor
-  if (ReadI2CByte(sensorAddr, 0x0, &val) == 0)
-  {
-    // The second LSB indicates if something was not detected, i.e.,
-    // LO = object detected, HI = nothing detected
-    if (val & 0x2)
-    {
-      Serial.println("Nothing detected");
-      Serial.println(val);
-    }
-    else
-    {
-      Serial.println("Object detected");
-      Serial.println(val);
-    }
-  } 
-  else
-  {
-    Serial.println("Failed to read from sensor");
-  }
-}
-
-//---------------- END of I2C Functions -----------------------------------------------
 
