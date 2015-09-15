@@ -51,7 +51,6 @@ const int R_C=120; // this is the value of the shunting resistor. see datasheet 
 const int V_AC_threshold=164; // normally 164 (midpoint between 120V and 208V
 const int V_AC_sensitivity=180; // normally 180 (empirical)
 // #define JB_WiFi // is WiFi installed & we are using WiFlyHQ library?
-#define JB_WiFi_simple // is WiFi installed and we are just pushing data?
 // #define JB_WiFi_control // is this JuiceBox controllable with WiFi (through HTTP responses)
 // #define LCD_SGC // old version of the u144 LCD - used in some early JuiceBoxes
  #define PCB_83 // 8.3+ version of the PCB, includes 8.6, 8.7 versions
@@ -269,16 +268,6 @@ byte day=5, hour=12, mins=0; // default day is Sat, time is noon, 0 min
 //------------ end timing params ---------------------------
 
 
-#ifdef JB_WiFi_simple
-  SoftwareSerial wifiSerial(pin_sRX, pin_sTX);
-#endif
-
-#ifdef JB_WiFi
-  SoftwareSerial wifiSerial(pin_sRX, pin_sTX);
-  WiFly wifly;
-#endif
-
-
 //-------------------------------------- BUZZER CODE -----------------------------------------------------
 int tmr2cnt = 0;
 int tmr2cnt2 = 0;
@@ -383,10 +372,6 @@ void setup() {
   // if not present, we will assume this is the Base edition
   LCD_on=myLCD->isAlive();
   
-#ifdef JB_WiFi_simple 
-  wifiSerial.begin(9600);
-#endif
-
   // the time settings only valid in the PREMIUM edition
   // load day/hour from the configuration (EEPROM)
   EEPROM_readAnything(0, configuration);
@@ -418,11 +403,6 @@ void setup() {
   hour=limit(hour, 0, 23);
   mins=limit(mins, 0, 60);
 
-  // will need to add pull of the true RTC time from a WiFi module here 
-#ifdef JB_WiFi_simple
-  // enter command mode, run 'get time'
-#endif
-    
   // set the clock offset; later in code, #of sec from midnight can be calculated as
   //     sec_up-clock_offset
   clock_offset=sec_up-long(day*24+hour)*3600-long(mins)*60; 
@@ -633,14 +613,6 @@ void loop() {
       else configuration.outC_120--;
     }
 
-    // send out a report to MotherShip via WiFi if on
-#ifdef JB_WiFi_simple
-    if( int(sec_up-timer_sec) > type2_reportMask ) {
-      timer_sec=sec_up;
-      sprintf(str, "V%d,L%d,E%d,A%d,P%d", int(inV_AC), int(configuration.energy+energy), int(energy*10), int(outC_meas*10), int(power*10));
-      sendWiFiMsg(str);
-    }
-#endif    
   } // end state_C
   
   if(state==STATE_D) {
@@ -717,15 +689,6 @@ void loop() {
   
     }
     
-    // send out a report to MotherShip via WiFi if WiFi is enabled
-  #ifdef JB_WiFi_simple
-    if( int(sec_up-timer_sec) > type1_reportMask ) {
-      timer_sec=sec_up; // reset start of timer
-      sprintf(str, "V%d,L%d,S%d", int(inV_AC), configuration.energy, savings);
-      sendWiFiMsg(str);
-    }
-  #endif
-  
   }
 
   delay(meas_cycle_delay); // reasonable delay for screen refresh
@@ -1241,9 +1204,6 @@ void printClrMsg(const char *str, const int del, const byte red, const byte gree
 void printErrorMsg(const __FlashStringHelper *fstr, const int del) {
   printClrMsg(fstr, 30000, 0x1f, 0x3f, 0);
   // also send a message to server if WiFI is enabled
-#ifdef JB_WiFi_simple
-  sendWiFiMsg(fstr, 1);
-#endif
 }
 
 
@@ -1263,35 +1223,6 @@ void printTime() {
   printJBstr(0, 0, 2, 0x1f, 0, 0x1f, tempstr);     
 }
 
-
-#ifdef JB_WiFi_simple
-//==================== WIFI messaging functions ===============================================
-void sendWiFiMsg(char *str) {
-  // print out the packet
-  // ID first
-  for(int iii=0; iii<10; iii++) {
-    wifiSerial.print(configuration.IDstamp[iii]); // 10-50 digit ID - unique to each JuiceBox
-  }
-  wifiSerial.print(":");
-  // print data now
-  wifiSerial.print(str);
-  wifiSerial.print(":");
-  wifiSerial.println(UDPpacketEndSig);
-}
-void sendWiFiMsg(const __FlashStringHelper *fstr, int dummy) {
-  // print out the packet
-  // ID first
-  for(int iii=0; iii<10; iii++) {
-    wifiSerial.print(configuration.IDstamp[iii]); // 10-50 digit ID - unique to each JuiceBox
-  }
-  wifiSerial.print(":");
-  // print data now
-  wifiSerial.print(fstr);
-  wifiSerial.print(":");
-  wifiSerial.println(UDPpacketEndSig);
-}
-//===================== END WiFi messaging functions ===========================================
-#endif
 //---------------------------- end printing help functions ------------------------
 
 //---------------------------- input control functions ----------------------------
