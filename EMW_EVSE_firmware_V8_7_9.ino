@@ -41,8 +41,7 @@ GNU General Public License for more details: http://www.gnu.org/licenses/
 const int R_C=120; // this is the value of the shunting resistor. see datasheet for the right value. 
 const int V_AC_threshold=164; // normally 164 (midpoint between 120V and 208V
 const int V_AC_sensitivity=180; // normally 180 (empirical)
-#define PCB_83 // 8.3+ version of the PCB, includes 8.6, 8.7 versions
-#define VerStr "V8.7.9 ejw 4 (9/14/2015)" // detailed exact version of firmware (thanks Gregg!)
+#define VerStr "V8.7.9+ (9/14/2015)" // detailed exact version of firmware (thanks Gregg!)
 #define GFI // need to be uncommented for GFI functionality
 //------------------------------- END MAIN SWITCHES ------------------------------
 
@@ -57,7 +56,6 @@ const int V_AC_sensitivity=180; // normally 180 (empirical)
 #include <Adafruit_SSD1306.h>
 
 #include <DS3232RTC.h>        //http://github.com/JChristensen/DS3232RTC
-#include <Streaming.h>        //http://arduiniana.org/libraries/streaming/
 #include <Time.h>             //http://playground.arduino.cc/Code/Time
 
 #define OLED_RESET 4
@@ -100,13 +98,10 @@ const byte pin_throttle=3; // wired to a trimpot on a board
 // has to be pin 3 as only pin 2 and 3 are available for interrupts on Pro Mini
 const byte pin_GFI=3; 
 const byte pin_inRelay=5; 
-const byte pin_ctrlBtn_C=6; // control button 1 ("C" on the remote, receiver pin 2)
-const byte pin_ctrlBtn_D=8; // control button 2 ("D" on the remote, receiver pin 3)
 const byte pin_PWM=9; // J pilot PWM pin
 
 const byte pin_StatusLight=10;
 
-const byte pin_ctrlBtn_A=11; // control button 3 ("A" on the remote, receiver pin 0) 
 const byte pin_GFItest=12; // pin wired to a GFCI-tripping relay - for the periodic testing of the GFCI circuit & stuck relay detection
 //---------------- END PINOUTS -----------------------
 
@@ -189,18 +184,17 @@ const byte meas_cycle_delay=100; // in ms
 // initialize the clock - assume no RTC and that we are getting turned on at the hour
 //byte day=5, hour=12, mins=0; // default day is Sat, time is noon, 0 min
 //------------ end timing params ---------------------------
+#define tracer(x) Serial.print(x);delay(1000);
 
 void setup() {
   wdt_disable();
   
   Serial.begin(115200);
   Serial.println("Starting Initialization");
+  delay(10000);
 
   // set digital input pins
   pinMode(pin_GFI, INPUT);
-  pinMode(pin_ctrlBtn_A, INPUT);
-  pinMode(pin_ctrlBtn_C, INPUT);
-  pinMode(pin_ctrlBtn_D, INPUT_PULLUP);
 
   // set digital output pins
   pinMode(pin_PWM, OUTPUT);
@@ -212,30 +206,46 @@ void setup() {
   analogWrite(pin_StatusLight, status_Low);
 
   Serial.println("After Pin Initialization");
+  delay(10000);
 
   //---------------------------------- set up timers
   cli();//stop interrupts
 
+  tracer("1 ")
+
   // use Timer1 library to set PWM frequency 
   // 10-bit PWM resolution
   Timer1.initialize(1000); // 1kHz for J1772
+  tracer("1 ")
   Timer1.pwm(pin_PWM, 0); 
+  tracer("2 ")
   
-  //set timer2 interrupt at 8kHz
-  TCCR2A = 0;// set entire TCCR2A register to 0
-  TCCR2B = 0;// same for TCCR2B
-  TCNT2  = 0;//initialize counter value to 0
-  // set compare match register for 8khz increments
-  OCR2A = 249;// = (16*10^6) / (8000*8) - 1 (must be <256)
-  // turn on CTC mode
-  TCCR2A |= (1 << WGM21);
-  // Set CS21 bit for 8 prescaler
-  TCCR2B |= (1 << CS21);   
-  // enable timer compare interrupt
-  TIMSK2 |= (1 << OCIE2A);
+//  //set timer2 interrupt at 8kHz
+//  TCCR2A = 0;// set entire TCCR2A register to 0
+//  tracer("3 ")
+//  TCCR2B = 0;// same for TCCR2B
+//  tracer("4 ")
+//  TCNT2  = 0;//initialize counter value to 0
+//  tracer("5 ")
+//  // set compare match register for 8khz increments
+//  OCR2A = 249;// = (16*10^6) / (8000*8) - 1 (must be <256)
+//  tracer("6 ")
+//  // turn on CTC mode
+//  TCCR2A |= (1 << WGM21);
+//  tracer("7 ")
+//  // Set CS21 bit for 8 prescaler
+//  TCCR2B |= (1 << CS21);   
+//  tracer("8 ")
+//  // enable timer compare interrupt
+//  TIMSK2 |= (1 << OCIE2A);
+//  tracer("9 ")
 
   sei();
+  tracer("A ")
   //---------------------------------- end timer setup
+
+  Serial.println("End Timer Setup");
+  delay(10000);
 
   //---------------------------- calibrate state boundaries ---------------------------------------------
   // first, need to record a minimum value of the wave - needed for pilot voltage measurement later on
@@ -279,7 +289,6 @@ void setup() {
   V_Ard_pin_0=0; // DEBUG - override for now
   
   // now check for a stuck relay and measure input voltage 
-#ifndef PCB_81
   GFI_tripped=0;
   // force the GFI pin
   digitalWrite(pin_GFItest, HIGH);
@@ -288,27 +297,31 @@ void setup() {
   // by now, if the trip occurred, the GFI trip flag should be set
   if(GFI_tripped==1) {
     // we have a stuck relay, throw an error
-    printErrorMsg(F("STUCK RELAY! \nContact us\nExiting..."), 30000);
+    Serial.println("STUCK RELAY! \nContact us\nExiting...");
     return; // break from loop() which will be called back a moment later
   }
 #endif
+  Serial.println("Before Set Relay");
+  delay(10000);
+
   // turn on the main relay
   setRelay(HIGH);
   // wait for settling (RC on the pin is 0.1s so need to wait at least for 0.3s
   // but not too long or we will burn out the 10k resistor...
   delay(300);
-#endif
+
   inV_AC=read_V();    
   digitalWrite(pin_GFItest, LOW);
   setRelay(LOW);  
   
+  
+  Serial.println("After Set Relay");
+  delay(10000);
+
   // attach interrupt on pin 3 (GFI)
 #ifdef GFI
   attachInterrupt(1, GFI_break, RISING);
 #endif
-
-  // prep for calc of the savings
-  getSavingsPerKWH(gascost, mpg, ecost, whpermile);
   
   // set watchdog - http://tushev.org/articles/arduino/item/46-arduino-and-watchdog-timer, http://www.nongnu.org/avr-libc/user-manual/group__avr__watchdog.html
   wdt_enable(WDTO_8S); // longest is 8S
@@ -320,7 +333,7 @@ void setup() {
   display.clearDisplay();
   display.setTextSize(1);
   display.setTextColor(WHITE);
-  // init done
+  // display init done
   
   // Initialize RTC
   //setSyncProvider() causes the Time library to synchronize with the
@@ -329,7 +342,7 @@ void setup() {
   Serial.print("RTC Sync");
   if (timeStatus() != timeSet) Serial.print(" FAIL!");
   Serial.println("");
-
+  // rtc init done
 
   // initialize in state A - EVSE ready
   setPilot(PWM_FULLON);
@@ -360,14 +373,12 @@ void loop() {
       }
       energy=0; // reset energy counter for this cycle  
     }
-
-    if(prev_state==STATE_C) { // exiting state C - charging
-      analogWrite(pin_StatusLight, status_Mid);
-    }
   } // end state transition check
 
   if(state!=STATE_C) {
     analogWrite(pin_StatusLight, status_Mid);
+  } else {
+    analogWrite(pin_StatusLight, status_Full);
   }
 
   //-------------------------------- process states
@@ -386,8 +397,6 @@ void loop() {
     setOutC();
     setPilot(duty);
     setRelay(HIGH); // relay on
-    
-    analogWrite(pin_StatusLight, status_Full);
 
     // process energy metering
     float outC_meas=read_C();
@@ -398,20 +407,17 @@ void loop() {
     energy+=power*delta/1000/3600; 
 
     // print real-time stats
-    printTime();    
-    sprintf(tempstr, "Power: %d.%01d KW  ", int(power), int(power*10)%10); 
-        printJBstr(0, 2, 2, 0x1f, 0x3f, 0, tempstr);   
+    sprintf(tempstr, "Power: %d.%01d KW  ", int(power), int(power*10)%10);
+    Serial.println(tempstr);
     sprintf(tempstr, "Time: %d min  ", int((timer-timer0)/1000)/60); 
-        printJBstr(0, 3, 2, 0x1f, 0x3f, 0, tempstr);   
+    Serial.println(tempstr);
     // also show energy cost in this one
     // use US average cost per http://www.eia.gov/electricity/monthly/epm_table_grapher.cfm?t=epmt_5_6_a - $0.12/kwhr
     sprintf(tempstr, "%d.%01d KWH ($%d.%02d) ", int(energy), int(energy*10)%10, int(energy/8), int(energy/8*100)%100 ); 
-        printJBstr(0, 5, 2, 0x1f, 0x3f, 0, tempstr);   
+    Serial.println(tempstr);
     sprintf(tempstr, "%dV, %dA (%d) ", int(inV_AC), int(outC_meas), int(outC)); 
-        printJBstr(0, 7, 2, 0x1f, 0x3f, 0, tempstr);   
+    Serial.println(tempstr);
         
-    // print button menu
-    printJBstr(0, 9, 2, 0, 0, 0x1f, F("A=outC+, D=outC- \nB=WPS")); 
   } // end state_C
   
   if(state==STATE_D) {
@@ -420,7 +426,7 @@ void loop() {
   }
   
   if(state==STATE_E || state==STATE_F || state==STATE_INVALID) {
-    printClrMsg(F("Abnormal State!"), 1000, 0x1f, 0x3f, 0);
+    Serial.println("Abnormal State!");
     setRelay(LOW); // relay off
   }  
           
@@ -429,12 +435,8 @@ void loop() {
       // set the output current - can be changed by trimpot or remote without a restart
       // need this here so we have an echo on user input
       setOutC(); 
-      
-       printTime();
-      // no LCD
       sprintf(tempstr, "%dV, %dA", int(inV_AC), int(outC));
       Serial.println(tempstr);  
-      analogWrite(pin_StatusLight, status_Mid);
     }
 
   delay(meas_cycle_delay); // reasonable delay for screen refresh
@@ -442,13 +444,12 @@ void loop() {
 #ifdef GFI
   // check GFI flag (if a trip is detected, this flag would be set via the special interrupt)
   if(GFI_tripped) {
-    printClrMsg(F("GFI tripped!\nRetrying in 15 min..."), 300, 0x1f, 0x3f, 0);
+    Serial.println("GFI tripped!\nRetrying in 15 min...");
     GFI_trip_count++; // allowed max of 4; if more than 4, need 2 user inputs to override
     if(GFI_trip_count>4) {
       // wait for user to unplug; since the user then will have to re-plug to re-energize the system, this can be considered 2 actions
-      printClrMsg(F("4th GFI trip!\nUnplug / re-plug\nto resume"), 1000, 0x1f, 0x3f, 0);
+      Serial.println("4th GFI trip!\nUnplug / re-plug\nto resume");
       while(getState()!=STATE_A);
-    } else {
     }  
   }
 #endif
@@ -568,33 +569,6 @@ float read_V() {
   V_Ard_pin+=analogRead(pin_V)*Aref/1024.;
   V_Ard_pin/=2;
   
-#ifdef PCB_81
-  // for PCB versions before 8.3, 
-  // THIS FEATURE IS IN BETA AND MAY NOT WORK ON THE FIRST VERSION OF THE BASE BOARDS WITHOUT TWEAKING FIRMWARE
-  // specifically, you may need to tweak the voltage threshold between 120V and 240V input voltage 
-  //   (line starting with 'if(V_Ard_pin >' below). (1) connect JuiceBox to 120V, measure the voltage on pin A1 of the Arduino
-  //   (2) connect JuiceBox to 240V, measure the voltage on pin A1. Set the threshold to the voltage in the middle between 
-  //   these two values
-  // with 200k resistor from AC rectified line, we have 0.8mA peak primary current at 120VAC
-  //     and 1.6mA at 240VAC
-  // according to PC817X1 opto's datasheet, CTR is 80-160% at 5mA
-  // typical curve suggests 80% of that at 2.5mA, 50% at 1mA
-  // therefore, we have a secondary peak current of 0.3-0.6mA at 120VAC, 1-2mA at 240VAC
-  // this corresponds to a secondary voltage drop: 0.3-0.6V or 1-2V per 1k of secondary resistance
-  //               (actually clipped to 5V since we are using 5v supply)
-  // also, need to take into account that we see the significant current only at the positive peak of AC wave
-  // generally, for ~1/4 of the period for 120VAC and 1/3rd for 240VAC
-  // finally, the average drop within over the drop time is ~1/2 of the peak drop
-  // putting it all together, we expect average drop of 0.04-0.08V per 1k for 120VAC and 0.16-0.32V per 1k for 240VAC 
-  //               (with some clipping starting at 3-5k - really becoming visible at 5-7k)  
-  // Example: 4.7k secondary - 0.2-0.4V and 0.8-1.5V drops
-  // Example: 10k secondary - 0.4-0.8V and 1.2-2.2V drops
-  // Using 10k secondary, place mid-point at 1V drop, or 4V threshold
-  // cap at 4.9V to prevent from defaulting to 120V in case when no PC817 installed at all
-  if(V_Ard_pin > 3.5 && V_Ard_pin<4.9) V_AC=120;
-#endif
-
-#ifdef PCB_83
   // in 8.3 and later, the implementation changed to measurement using the GFCI current sensor
   // ~200x division factor for voltage (total gain of test loop is ~1.2e-2)
   //     (306 from RMS voltage on sensor = 680x on the opamp, 0.5x due to half-wave rectification, 0.9x for converting to average from RMS)
@@ -616,7 +590,6 @@ float read_V() {
     V_AC=240; // default fall-back value
   }
   
-#endif
 
   return V_AC; 
 }
@@ -665,54 +638,5 @@ float read_C() {
   // for AC1050-1075 this corresponds to ~18A/V
   return V_C*Te/R_C*2.22;  
 #endif
-}
-
-//------------------------------ printing help functions -------------------------
-void printJBstr(byte col, byte row, byte font, byte c1, byte c2, byte c3, const __FlashStringHelper *fstr) {
-    Serial.print("    ");
-    Serial.println(fstr);
-}
-void printJBstr(byte col, byte row, byte font, byte c1, byte c2, byte c3, const char *sstr) {
-    Serial.print("    ");
-    Serial.println(sstr);
-}
-void printClrMsg(const __FlashStringHelper *fstr, const int del, const byte red, const byte green, const byte blue) {
-  printJBstr(0, 2, 2, red, green, blue, fstr);      
-  delay(del);
-}
-void printClrMsg(const char *str, const int del, const byte red, const byte green, const byte blue) {
-  printJBstr(0, 2, 2, red, green, blue, str);      
-  delay(del);
-}
-void printErrorMsg(const __FlashStringHelper *fstr, const int del) {
-  printClrMsg(fstr, 30000, 0x1f, 0x3f, 0);
-}
-
-// print time etc on the first line
-void printTime() {
-  // have to use tempstr here
-  sprintf(tempstr, "%s", VerStr);
-//  sprintf(tempstr, "%s %02d:%02d (%d) ", VerStr, hourOfDay(), minsOfHour(), state); 
-  printJBstr(0, 0, 2, 0x1f, 0, 0x1f, tempstr);     
-}
-//---------------------------- end printing help functions ------------------------
-
-//---------------------------- input control functions ----------------------------
-byte limit(const byte value, const byte minimum, const byte maximum) {
-  if(value<minimum) return minimum;
-  if(value>maximum) return maximum;
-  return value;
-}
-
-void getSavingsPerKWH(int gascost, int mpg, int ecost, int whpermile) {
-  int gCostPerMile=gascost/mpg;
-  int gCostPerKWH=gCostPerMile*1000/whpermile;
-  
-  savingsPerKWH=gCostPerKWH-ecost;
-}
-
-// long delays
-void delaySecs(int secs) {
-  for(int si=0; si<secs; si++) delay(1000);
 }
 
