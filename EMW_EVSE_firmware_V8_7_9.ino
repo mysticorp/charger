@@ -206,7 +206,7 @@ float power=0;
 float energy=0; // how much energy went through - in kWHrs 
 
 char str[64]; // main temp str buffer - do not expand beyond 64 - may run out of memory
-char tempstr[24]; // scratchpad for text operations
+char tempstr[100]; // scratchpad for text operations
 
 byte GFI_tripped=0;
 byte GFI_trip_count=0;
