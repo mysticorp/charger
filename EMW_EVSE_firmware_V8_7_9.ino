@@ -36,15 +36,6 @@ GNU General Public License for more details: http://www.gnu.org/licenses/
 */
 
 //------------------------------ MAIN SWITCHES -----------------------------------
-#define DEBUG // this results in many additional printouts
-#define DEBUG2 // even more printouts
-// #define DEBUGGFI
-
-// the following results in much more frequent reporting of data by JuiceBox to EmotorWerks servers
-// PLEASE DO NOT USE in your JuiceBox UNLESS AUTHORIZED BY EMotorWerks - this overloads our servers
-// and slows down the system for everyone. JuiceBoxes that consistently report more frequently than 
-// every ~1 minute will be permanently banned from our network
-// #define DEBUG_WIFI 
 
 #define AC1075
 const int R_C=120; // this is the value of the shunting resistor. see datasheet for the right value. 
@@ -71,11 +62,6 @@ const int V_AC_sensitivity=180; // normally 180 (empirical)
 
 #define OLED_RESET 4
 Adafruit_SSD1306 display(OLED_RESET);
-
-// EEPROM handler
-#include <EEPROM.h>
-#include "EEPROM_VMcharger.h"
-
 
 // need this to remap PWM frequency
 #include <TimerOne.h>
@@ -179,9 +165,7 @@ const float nominal_outC_120V=15; // 15A by default from a 120VAC line
 float outC=nominal_outC_240V; 
 float power=0;
 float energy=0; // how much energy went through - in kWHrs 
-
-char str[64]; // main temp str buffer - do not expand beyond 64 - may run out of memory
-char tempstr[24]; // scratchpad for text operations
+char tempstr[100]; // scratchpad for text operations
 
 byte GFI_tripped=0;
 byte GFI_trip_count=0;
@@ -263,10 +247,6 @@ void setup() {
   // calibration is done at every power-up
   setPilot(PWM_FULLON); // this should produce a steady +12V signal on a pilot pin
   float pVcal=read_pV();
-#ifdef DEBUG
-  sprintf(str, "pV: %d", int(pVcal*1000)); 
-  printJBstr(0, 9, 2, 0x1f, 0, 0, str);      
-#endif  
 
   // set default thresholds for pilot signal levels
   state_A_Vmin=def_state_A_Vmin; state_A_Vmax=def_state_A_Vmax; 
@@ -419,16 +399,16 @@ void loop() {
 
     // print real-time stats
     printTime();    
-    sprintf(str, "Power: %d.%01d KW  ", int(power), int(power*10)%10); 
-        printJBstr(0, 2, 2, 0x1f, 0x3f, 0, str);   
-    sprintf(str, "Time: %d min  ", int((timer-timer0)/1000)/60); 
-        printJBstr(0, 3, 2, 0x1f, 0x3f, 0, str);   
+    sprintf(tempstr, "Power: %d.%01d KW  ", int(power), int(power*10)%10); 
+        printJBstr(0, 2, 2, 0x1f, 0x3f, 0, tempstr);   
+    sprintf(tempstr, "Time: %d min  ", int((timer-timer0)/1000)/60); 
+        printJBstr(0, 3, 2, 0x1f, 0x3f, 0, tempstr);   
     // also show energy cost in this one
     // use US average cost per http://www.eia.gov/electricity/monthly/epm_table_grapher.cfm?t=epmt_5_6_a - $0.12/kwhr
-    sprintf(str, "%d.%01d KWH ($%d.%02d) ", int(energy), int(energy*10)%10, int(energy/8), int(energy/8*100)%100 ); 
-        printJBstr(0, 5, 2, 0x1f, 0x3f, 0, str);   
-    sprintf(str, "%dV, %dA (%d) ", int(inV_AC), int(outC_meas), int(outC)); 
-        printJBstr(0, 7, 2, 0x1f, 0x3f, 0, str);   
+    sprintf(tempstr, "%d.%01d KWH ($%d.%02d) ", int(energy), int(energy*10)%10, int(energy/8), int(energy/8*100)%100 ); 
+        printJBstr(0, 5, 2, 0x1f, 0x3f, 0, tempstr);   
+    sprintf(tempstr, "%dV, %dA (%d) ", int(inV_AC), int(outC_meas), int(outC)); 
+        printJBstr(0, 7, 2, 0x1f, 0x3f, 0, tempstr);   
         
     // print button menu
     printJBstr(0, 9, 2, 0, 0, 0x1f, F("A=outC+, D=outC- \nB=WPS")); 
@@ -452,8 +432,8 @@ void loop() {
       
        printTime();
       // no LCD
-      sprintf(str, "%dV, %dA", int(inV_AC), int(outC));
-      Serial.println(str);  
+      sprintf(tempstr, "%dV, %dA", int(inV_AC), int(outC));
+      Serial.println(tempstr);  
       analogWrite(pin_StatusLight, status_Mid);
     }
 
@@ -469,9 +449,6 @@ void loop() {
       printClrMsg(F("4th GFI trip!\nUnplug / re-plug\nto resume"), 1000, 0x1f, 0x3f, 0);
       while(getState()!=STATE_A);
     } else {
-#ifndef DEBUGGFI                 
-      delaySecs(900); // 15 min
-#endif
     }  
   }
 #endif
@@ -547,21 +524,11 @@ int getState() {
   
   float pV=read_pV();
   
-#ifdef DEBUG
-//  sprintf(str, "raw pV=%d, ", int(pV*1000));
-//  printJBstr(0, 10, 2, 0x1f, 0, 0, str);      
-#endif
-
   // in mode=1, the state is measured while pilot is oscillating so need to recalc
   // pV=pV_min*(1-duty)+pV_max*duty
   // so pV_max=(pV-pV_min*(1-duty))/duty
   if(mode==1) pV=((pV-pV_min)*PWM_res+pV_min*duty)/duty;
   
-#ifdef DEBUG
-//  sprintf(str, "calc pV=%d", int(pV*1000));
-//  printJBstr(0, 11, 2, 0x1f, 0, 0, str);      
-#endif
-
   if(pV>state_A_Vmin && pV<=state_A_Vmax) return STATE_A;
   if(pV>state_B_Vmin && pV<=state_B_Vmax) return STATE_B;
   if(pV>state_C_Vmin && pV<=state_C_Vmax) return STATE_C;
@@ -639,11 +606,6 @@ float read_V() {
   V_AC=V_AC_sensitivity*(V_Ard_pin-V_Ard_pin_0);
 #else
   V_AC=240;
-#endif
-
-#ifdef DEBUG
-  sprintf(str, "V_AC: %d", int(V_AC));
-  printJBstr(0, 9, 2, 0x1f, 0, 0, str);   
 #endif
   
   if(V_AC < V_AC_threshold) { // midpoint between 120 and 208V
