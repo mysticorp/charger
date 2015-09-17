@@ -107,7 +107,7 @@ const byte pin_GFItest=12; // pin wired to a GFCI-tripping relay - for the perio
 
 //---------------- Status Light Levels ---------------
 const byte status_Off=0;
-const byte status_Low=10;
+const byte status_Low=64;
 const byte status_Mid=128;
 const byte status_Full=255;
 //---------------- End Status Light Levels -----------------------
@@ -152,6 +152,7 @@ const unsigned int MAXDUTY=970; // <97% to stay in AC charging zone for J1772 st
 
 int sawTemp = 0;
 float lastTemp = 0;
+int loopMessageShown = 0;
 
 const float maxC=60; // max rated current
 float inV_AC=0; // this will be measured
@@ -190,8 +191,7 @@ void setup() {
   wdt_disable();
   
   Serial.begin(115200);
-  Serial.println("Starting Initialization");
-  delay(10000);
+  Serial.println("Starting Initialization");delay(10000);
 
   // set digital input pins
   pinMode(pin_GFI, INPUT);
@@ -204,48 +204,18 @@ void setup() {
 
   // Indicate we are booting on status light
   analogWrite(pin_StatusLight, status_Low);
-
-  Serial.println("After Pin Initialization");
-  delay(10000);
+  Serial.println("After Set Pins");delay(10000);
 
   //---------------------------------- set up timers
   cli();//stop interrupts
 
-  tracer("1 ")
-
   // use Timer1 library to set PWM frequency 
   // 10-bit PWM resolution
   Timer1.initialize(1000); // 1kHz for J1772
-  tracer("1 ")
   Timer1.pwm(pin_PWM, 0); 
-  tracer("2 ")
   
-//  //set timer2 interrupt at 8kHz
-//  TCCR2A = 0;// set entire TCCR2A register to 0
-//  tracer("3 ")
-//  TCCR2B = 0;// same for TCCR2B
-//  tracer("4 ")
-//  TCNT2  = 0;//initialize counter value to 0
-//  tracer("5 ")
-//  // set compare match register for 8khz increments
-//  OCR2A = 249;// = (16*10^6) / (8000*8) - 1 (must be <256)
-//  tracer("6 ")
-//  // turn on CTC mode
-//  TCCR2A |= (1 << WGM21);
-//  tracer("7 ")
-//  // Set CS21 bit for 8 prescaler
-//  TCCR2B |= (1 << CS21);   
-//  tracer("8 ")
-//  // enable timer compare interrupt
-//  TIMSK2 |= (1 << OCIE2A);
-//  tracer("9 ")
-
   sei();
-  tracer("A ")
   //---------------------------------- end timer setup
-
-  Serial.println("End Timer Setup");
-  delay(10000);
 
   //---------------------------- calibrate state boundaries ---------------------------------------------
   // first, need to record a minimum value of the wave - needed for pilot voltage measurement later on
@@ -301,8 +271,6 @@ void setup() {
     return; // break from loop() which will be called back a moment later
   }
 #endif
-  Serial.println("Before Set Relay");
-  delay(10000);
 
   // turn on the main relay
   setRelay(HIGH);
@@ -315,9 +283,6 @@ void setup() {
   setRelay(LOW);  
   
   
-  Serial.println("After Set Relay");
-  delay(10000);
-
   // attach interrupt on pin 3 (GFI)
 #ifdef GFI
   attachInterrupt(1, GFI_break, RISING);
@@ -326,31 +291,40 @@ void setup() {
   // set watchdog - http://tushev.org/articles/arduino/item/46-arduino-and-watchdog-timer, http://www.nongnu.org/avr-libc/user-manual/group__avr__watchdog.html
   wdt_enable(WDTO_8S); // longest is 8S
   
-  // Initialize Display
-  // by default, we'll generate the high voltage from the 3.3v line internally! (neat!)
-  display.begin(SSD1306_SWITCHCAPVCC, 0x3c);  // initialize with the I2C addr 0x3D (for the 128x64)
-
-  display.clearDisplay();
-  display.setTextSize(1);
-  display.setTextColor(WHITE);
-  // display init done
-  
-  // Initialize RTC
-  //setSyncProvider() causes the Time library to synchronize with the
-  //external RTC by calling RTC.get() every five minutes by default.
-  setSyncProvider(RTC.get);
-  Serial.print("RTC Sync");
-  if (timeStatus() != timeSet) Serial.print(" FAIL!");
-  Serial.println("");
-  // rtc init done
+//  // Initialize Display
+//  // by default, we'll generate the high voltage from the 3.3v line internally! (neat!)
+//  display.begin(SSD1306_SWITCHCAPVCC, 0x3c);  // initialize with the I2C addr 0x3D (for the 128x64)
+//
+//  display.clearDisplay();
+//  display.setTextSize(1);
+//  display.setTextColor(WHITE);
+//  // display init done
+//  
+//  // Initialize RTC
+//  //setSyncProvider() causes the Time library to synchronize with the
+//  //external RTC by calling RTC.get() every five minutes by default.
+//  setSyncProvider(RTC.get);
+//  Serial.print("RTC Sync");
+//  if (timeStatus() != timeSet) Serial.print(" FAIL!");
+//  Serial.println("");
+//  // rtc init done
 
   // initialize in state A - EVSE ready
   setPilot(PWM_FULLON);
+  
+    Serial.println("Finished Initialization");delay(10000);
+
 }
 
 
 //============================================= MAIN LOOP ============================================
 void loop() {
+    Serial.println("Start of Loop(1)");delay(10000);
+  
+  if (loopMessageShown < 1) {
+    Serial.println("Start of Loop(2)");delay(10000);
+    loopMessageShown = 1;
+  }
   
   // reset GFI trip status so we can retry after GFI timeout
   // GFI is checked in the end of this cycle - by that time, a few hundreds ms pass
