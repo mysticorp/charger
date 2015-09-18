@@ -52,14 +52,14 @@ const int V_AC_sensitivity=180; // normally 180 (empirical)
 // Additions for use of Adafruit display and DS3223RTC
 #include <SPI.h>
 #include <Wire.h>
-#include <Adafruit_GFX.h>
-#include <Adafruit_SSD1306.h>
+//#include <Adafruit_GFX.h>
+//#include <Adafruit_SSD1306.h>
 
 #include <DS3232RTC.h>        //http://github.com/JChristensen/DS3232RTC
 #include <Time.h>             //http://playground.arduino.cc/Code/Time
 
-#define OLED_RESET 4
-Adafruit_SSD1306 display(OLED_RESET);
+//#define OLED_RESET 4
+//Adafruit_SSD1306 display(OLED_RESET);
 
 // need this to remap PWM frequency
 #include <TimerOne.h>
@@ -161,7 +161,8 @@ const float nominal_outC_120V=15; // 15A by default from a 120VAC line
 float outC=nominal_outC_240V; 
 float power=0;
 float energy=0; // how much energy went through - in kWHrs 
-char tempstr[100]; // scratchpad for text operations
+#define TEMP_STRING_LEN 100
+char tempstr[TEMP_STRING_LEN]; // scratchpad for text operations
 
 byte GFI_tripped=0;
 byte GFI_trip_count=0;
@@ -207,6 +208,7 @@ void setup() {
   Serial.println("After Set Pins");delay(10000);
 
   //---------------------------------- set up timers
+  Serial.println("Before CLI");delay(10000);
   cli();//stop interrupts
 
   // use Timer1 library to set PWM frequency 
@@ -215,6 +217,7 @@ void setup() {
   Timer1.pwm(pin_PWM, 0); 
   
   sei();
+  Serial.println("After SEI");delay(10000);
   //---------------------------------- end timer setup
 
   //---------------------------- calibrate state boundaries ---------------------------------------------
@@ -291,6 +294,8 @@ void setup() {
   // set watchdog - http://tushev.org/articles/arduino/item/46-arduino-and-watchdog-timer, http://www.nongnu.org/avr-libc/user-manual/group__avr__watchdog.html
   wdt_enable(WDTO_8S); // longest is 8S
   
+//  Serial.println("Before Display");delay(10000);
+//
 //  // Initialize Display
 //  // by default, we'll generate the high voltage from the 3.3v line internally! (neat!)
 //  display.begin(SSD1306_SWITCHCAPVCC, 0x3c);  // initialize with the I2C addr 0x3D (for the 128x64)
@@ -299,16 +304,18 @@ void setup() {
 //  display.setTextSize(1);
 //  display.setTextColor(WHITE);
 //  // display init done
-//  
-//  // Initialize RTC
-//  //setSyncProvider() causes the Time library to synchronize with the
-//  //external RTC by calling RTC.get() every five minutes by default.
-//  setSyncProvider(RTC.get);
-//  Serial.print("RTC Sync");
-//  if (timeStatus() != timeSet) Serial.print(" FAIL!");
-//  Serial.println("");
-//  // rtc init done
-
+  
+  Serial.println("Before RTC");delay(10000);
+  // Initialize RTC
+  //setSyncProvider() causes the Time library to synchronize with the
+  //external RTC by calling RTC.get() every five minutes by default.
+  setSyncProvider(RTC.get);
+  Serial.print("RTC Sync");
+  if (timeStatus() != timeSet) Serial.print(" FAIL!");
+  Serial.println("");
+  // rtc init done
+  Serial.println("After RTC");delay(10000);
+  
   // initialize in state A - EVSE ready
   setPilot(PWM_FULLON);
   
@@ -381,15 +388,15 @@ void loop() {
     energy+=power*delta/1000/3600; 
 
     // print real-time stats
-    sprintf(tempstr, "Power: %d.%01d KW  ", int(power), int(power*10)%10);
+    snprintf(tempstr, TEMP_STRING_LEN, "Power: %d.%01d KW  ", int(power), int(power*10)%10);
     Serial.println(tempstr);
-    sprintf(tempstr, "Time: %d min  ", int((timer-timer0)/1000)/60); 
+    snprintf(tempstr, TEMP_STRING_LEN, "Time: %d min  ", int((timer-timer0)/1000)/60); 
     Serial.println(tempstr);
     // also show energy cost in this one
     // use US average cost per http://www.eia.gov/electricity/monthly/epm_table_grapher.cfm?t=epmt_5_6_a - $0.12/kwhr
-    sprintf(tempstr, "%d.%01d KWH ($%d.%02d) ", int(energy), int(energy*10)%10, int(energy/8), int(energy/8*100)%100 ); 
+    snprintf(tempstr, TEMP_STRING_LEN, "%d.%01d KWH ($%d.%02d) ", int(energy), int(energy*10)%10, int(energy/8), int(energy/8*100)%100 ); 
     Serial.println(tempstr);
-    sprintf(tempstr, "%dV, %dA (%d) ", int(inV_AC), int(outC_meas), int(outC)); 
+    snprintf(tempstr, TEMP_STRING_LEN, "%dV, %dA (%d) ", int(inV_AC), int(outC_meas), int(outC)); 
     Serial.println(tempstr);
         
   } // end state_C
@@ -409,7 +416,7 @@ void loop() {
       // set the output current - can be changed by trimpot or remote without a restart
       // need this here so we have an echo on user input
       setOutC(); 
-      sprintf(tempstr, "%dV, %dA", int(inV_AC), int(outC));
+      snprintf(tempstr, TEMP_STRING_LEN, "%dV, %dA", int(inV_AC), int(outC));
       Serial.println(tempstr);  
     }
 
