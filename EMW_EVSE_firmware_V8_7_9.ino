@@ -186,13 +186,14 @@ const byte meas_cycle_delay=100; // in ms
 // initialize the clock - assume no RTC and that we are getting turned on at the hour
 //byte day=5, hour=12, mins=0; // default day is Sat, time is noon, 0 min
 //------------ end timing params ---------------------------
-#define tracer(x) Serial.print(x);delay(1000);
+#define tracer(x) Serial.println(x);delay(1000);
 
 void setup() {
   wdt_disable();
   
   Serial.begin(115200);
-  Serial.println("Starting Initialization");delay(10000);
+
+  tracer("Starting Initialization");
 
   // set digital input pins
   pinMode(pin_GFI, INPUT);
@@ -205,10 +206,10 @@ void setup() {
 
   // Indicate we are booting on status light
   analogWrite(pin_StatusLight, status_Low);
-  Serial.println("After Set Pins");delay(10000);
+  
+  tracer("After Set Pins");
 
   //---------------------------------- set up timers
-  Serial.println("Before CLI");delay(10000);
   cli();//stop interrupts
 
   // use Timer1 library to set PWM frequency 
@@ -217,7 +218,7 @@ void setup() {
   Timer1.pwm(pin_PWM, 0); 
   
   sei();
-  Serial.println("After SEI");delay(10000);
+  tracer("After SEI");
   //---------------------------------- end timer setup
 
   //---------------------------- calibrate state boundaries ---------------------------------------------
@@ -270,7 +271,7 @@ void setup() {
   // by now, if the trip occurred, the GFI trip flag should be set
   if(GFI_tripped==1) {
     // we have a stuck relay, throw an error
-    Serial.println("STUCK RELAY! \nContact us\nExiting...");
+    tracer("STUCK RELAY! \nContact us\nExiting...");
     return; // break from loop() which will be called back a moment later
   }
 #endif
@@ -292,9 +293,9 @@ void setup() {
 #endif
   
   // set watchdog - http://tushev.org/articles/arduino/item/46-arduino-and-watchdog-timer, http://www.nongnu.org/avr-libc/user-manual/group__avr__watchdog.html
-  wdt_enable(WDTO_8S); // longest is 8S
+//  wdt_enable(WDTO_8S); // longest is 8S
   
-//  Serial.println("Before Display");delay(10000);
+//  tracer("Before Display");
 //
 //  // Initialize Display
 //  // by default, we'll generate the high voltage from the 3.3v line internally! (neat!)
@@ -305,7 +306,7 @@ void setup() {
 //  display.setTextColor(WHITE);
 //  // display init done
   
-  Serial.println("Before RTC");delay(10000);
+  tracer("Before RTC");
   // Initialize RTC
   //setSyncProvider() causes the Time library to synchronize with the
   //external RTC by calling RTC.get() every five minutes by default.
@@ -314,22 +315,22 @@ void setup() {
   if (timeStatus() != timeSet) Serial.print(" FAIL!");
   Serial.println("");
   // rtc init done
-  Serial.println("After RTC");delay(10000);
+  tracer("After RTC");
   
   // initialize in state A - EVSE ready
   setPilot(PWM_FULLON);
   
-    Serial.println("Finished Initialization");delay(10000);
+  tracer("Finished Initialization");
 
 }
 
 
 //============================================= MAIN LOOP ============================================
 void loop() {
-    Serial.println("Start of Loop(1)");delay(10000);
+    tracer("Start of Loop(1)");
   
   if (loopMessageShown < 1) {
-    Serial.println("Start of Loop(2)");delay(10000);
+    tracer("Start of Loop(2)");
     loopMessageShown = 1;
   }
   
