@@ -327,11 +327,30 @@ void setup() {
 
 //============================================= MAIN LOOP ============================================
 void loop() {
-    tracer("Start of Loop(1)");
   
   if (loopMessageShown < 1) {
     tracer("Start of Loop(2)");
     loopMessageShown = 1;
+  }
+
+
+  static time_t tLast; 
+  time_t t;
+  tmElements_t tm;
+  
+  t = now();
+  if (t != tLast) {
+      tLast = t;
+      printDateTime(t);
+      if (second(t) == 0 || sawTemp == 0) {
+          float c = RTC.temperature() / 4.;
+          float f = c * 9. / 5. + 32.;
+          lastTemp = f;
+          sawTemp = 1;
+          Serial.print(f);
+          Serial.print("F ");
+      }
+      Serial.println(" ");
   }
   
   // reset GFI trip status so we can retry after GFI timeout
@@ -344,10 +363,13 @@ void loop() {
   
   // manage state changes
   if(state!=prev_state) {
+    Serial.print("Change state: ");
+    Serial.println(state);
     timer=millis(); // start timer
     timer0=timer; // remember the start of charge
     
     if(state==STATE_C) {
+      Serial.println("Starting Charge State");
       // entering charging state - check for diode
       setPilot(PWM_FULLON/2);
       if(read_pV()>-1.5) {
@@ -371,8 +393,15 @@ void loop() {
     
   if(state==STATE_B) {
     setRelay(LOW); // relay off
-    setOutC();
-    setPilot(duty);
+    int currentHour = hour(t);
+    int currentMin = minute(t);
+    if (currentHour > 17 && currentMin < 58) {
+      setPilot(PWM_FULLON);
+      Serial.println("Waiting till 6pm to start charging");    
+    } else {
+      setOutC();
+      setPilot(duty);
+    }
   }
     
   if(state==STATE_C) {
@@ -620,5 +649,40 @@ float read_C() {
   // for AC1050-1075 this corresponds to ~18A/V
   return V_C*Te/R_C*2.22;  
 #endif
+}
+
+//print date and time to Serial
+void printDateTime(unsigned long t)
+{
+    printDate(t);
+    Serial.print(" ");
+    printTime(t);
+}
+
+//print time to Serial
+void printTime(unsigned long t)
+{
+    printI00(hour(t), ':');
+    printI00(minute(t), ':');
+    printI00(second(t), ' ');
+}
+
+//print date to Serial
+void printDate(unsigned long t)
+{
+    printI00(day(t), 0);
+    Serial.print(monthShortStr(month(t)));
+    Serial.print(year(t));
+}
+
+//Print an integer in "00" format (with  eading zero),
+//followed by a delimiter character to Serial.
+//Input value assumed to be between 0 and 99.
+void printI00(int val, char delim)
+{
+    if (val < 10) Serial.print("0");
+    Serial.print(val);
+    if (delim > 0) Serial.print(delim);
+    return;
 }
 
