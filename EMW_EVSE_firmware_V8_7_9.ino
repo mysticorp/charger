@@ -334,7 +334,7 @@ void loop() {
   }
 
 
-  static time_t tLast; 
+  static time_t tLast;
   time_t t;
   tmElements_t tm;
   
@@ -395,10 +395,11 @@ void loop() {
     setRelay(LOW); // relay off
     int currentHour = hour(t);
     int currentMin = minute(t);
-    if (currentHour > 17 && currentMin < 58) {
+    if (currentHour >= 0 && currentMin < 5) {
       setPilot(PWM_FULLON);
       Serial.println("Waiting till 6pm to start charging");    
     } else {
+      Serial.println("Sending back charge okay");
       setOutC();
       setPilot(duty);
     }
