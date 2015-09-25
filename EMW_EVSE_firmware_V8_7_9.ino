@@ -37,7 +37,6 @@ GNU General Public License for more details: http://www.gnu.org/licenses/
 
 //------------------------------ MAIN SWITCHES -----------------------------------
 
-#define AC1075
 const int PROGMEM R_C=120; // this is the value of the shunting resistor. see datasheet for the right value. 
 const int PROGMEM V_AC_threshold=164; // normally 164 (midpoint between 120V and 208V
 const int PROGMEM V_AC_sensitivity=180; // normally 180 (empirical)
@@ -45,8 +44,8 @@ const int PROGMEM V_AC_sensitivity=180; // normally 180 (empirical)
 #define GFI // need to be uncommented for GFI functionality
 //------------------------------- END MAIN SWITCHES ------------------------------
 #define ADAFRUIT
-//#define DS3232RTC_DEFINE
-//#define SERIAL_PRINTS
+#define DS3232RTC_DEFINE
+#define SERIAL_PRINTS
 
 #ifdef SERIAL_PRINTS
 #define ps(x) Serial.print(x);
@@ -335,7 +334,9 @@ void setup() {
 #ifdef DS3232RTC_DEFINE
   setSyncProvider(RTC.get);
   ps("RTC Sync");
-  if (timeStatus() != timeSet) psln(" FAIL!");
+  if (timeStatus() != timeSet) {
+    psln(" FAIL!");
+  }
   psln("");
   // rtc init done
   tracer("After RTC");
@@ -361,7 +362,6 @@ void loop() {
 #ifdef DS3232RTC_DEFINE
   static time_t tLast;
   time_t t;
-  tmElements_t tm;
   
   t = now();
   if (t != tLast) {
@@ -643,21 +643,7 @@ float read_V() {
 // in the absense of the current transformer this will return zero
 // RC constant defined by R11 C5 = 27k * 3.3uF = 90ms, or >5 line periods
 float read_C() {
-#ifdef AC1075
-  const int Te=1000; // # of turns
-#endif
-#ifdef CT_8349-1500
-  const int Te=1500; // # of turns
-#endif
-#ifdef CT_8420-1000
-  // assume 8420-1000 current transformer (50A max current, 20-1000 Hz working range)
-  const int Te=1018; // # of turns
-#endif
-#ifdef CT_3100
-  // assume 3100 current transformer (75A max current, 20-1000 Hz working range)
-  const int Te=3100; // # of turns
-#endif
-
+//  const int Te=1000; // # of turns
   // read the rectified voltage of the half-wave from the transformer
   // average between 2 readings 180 degree off each other
   int reading=analogRead(pin_C);
@@ -666,23 +652,12 @@ float read_C() {
   // this assumes an RC filter before Arduino pon with time constant >> line period and impedance >> R
   float V_C=reading*Aref/2/1024; 
 
-#ifdef AC1075
   // use a table lookup
   int index=floor(V_C*10);
   float remainder=V_C*10-index;
   if(index>31) return 75.; // prevent from array overflow
   float coeff=float(AC1075_calibration[index+1]-AC1075_calibration[index]); // 0.1V step
   return float(AC1075_calibration[index]+remainder*coeff)/10.; // linear extrapolation
-#else
-  // use a crude linear approximation
-  if(V_C>0.2) {
-    V_C+=0.2+V_C/6; // assuming 0.2V diode drop
-  } else V_C=0;
-
-  // *2 for half-wave rectification, 1.11 for conversion of average into RMS
-  // for AC1050-1075 this corresponds to ~18A/V
-  return V_C*Te/R_C*2.22;  
-#endif
 }
 
 //print date and time to Serial
@@ -719,9 +694,13 @@ void printDate(unsigned long t)
 //Input value assumed to be between 0 and 99.
 void printI00(int val, char delim)
 {
-    if (val < 10) ps("0");
+    if (val < 10) {
+      ps("0");
+    }
     ps(val);
-    if (delim > 0) ps(delim);
+    if (delim > 0) {
+      ps(delim);
+    }
     return;
 }
 
