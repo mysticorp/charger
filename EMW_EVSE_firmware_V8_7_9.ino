@@ -38,28 +38,47 @@ GNU General Public License for more details: http://www.gnu.org/licenses/
 //------------------------------ MAIN SWITCHES -----------------------------------
 
 #define AC1075
-const int R_C=120; // this is the value of the shunting resistor. see datasheet for the right value. 
-const int V_AC_threshold=164; // normally 164 (midpoint between 120V and 208V
-const int V_AC_sensitivity=180; // normally 180 (empirical)
-#define VerStr "V8.7.9+ (9/14/2015)" // detailed exact version of firmware (thanks Gregg!)
+const int PROGMEM R_C=120; // this is the value of the shunting resistor. see datasheet for the right value. 
+const int PROGMEM V_AC_threshold=164; // normally 164 (midpoint between 120V and 208V
+const int PROGMEM V_AC_sensitivity=180; // normally 180 (empirical)
+//#define VerStr "V8.7.9+" // detailed exact version of firmware (thanks Gregg!)
 #define GFI // need to be uncommented for GFI functionality
 //------------------------------- END MAIN SWITCHES ------------------------------
+#define ADAFRUIT
+//#define DS3232RTC_DEFINE
+//#define SERIAL_PRINTS
+
+#ifdef SERIAL_PRINTS
+#define ps(x) Serial.print(x);
+#define psln(x) Serial.println(x);
+#else
+#define ps(x)
+#define psln(x)
+#endif
 
 #include <Arduino.h>
 #include <avr/interrupt.h>
 #include <avr/wdt.h>
 
 // Additions for use of Adafruit display and DS3223RTC
+#ifdef DS3232RTC_DEFINE
 #include <SPI.h>
 #include <Wire.h>
-//#include <Adafruit_GFX.h>
-//#include <Adafruit_SSD1306.h>
+#endif
+#ifdef ADAFRUIT
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#endif
 
+#ifdef DS3232RTC_DEFINE
 #include <DS3232RTC.h>        //http://github.com/JChristensen/DS3232RTC
 #include <Time.h>             //http://playground.arduino.cc/Code/Time
+#endif
 
-//#define OLED_RESET 4
-//Adafruit_SSD1306 display(OLED_RESET);
+#ifdef ADAFRUIT
+#define OLED_RESET 4
+Adafruit_SSD1306 display(OLED_RESET);
+#endif
 
 // need this to remap PWM frequency
 #include <TimerOne.h>
@@ -71,63 +90,63 @@ const int V_AC_sensitivity=180; // normally 180 (empirical)
 // one entry per 0.1V in observed voltage on A1 pin. Since we have a 3.3v zener on that pin, need only 32-element array
 // array contains current value in 0.1A units
 // if the sensing was purely linear, we'd expect ~18A/volt but the forward drop on diode varies 
-const unsigned int AC1075_calibration[32]={0,0,5,28,49,70,93,116,139,
+const unsigned int PROGMEM AC1075_calibration[32]={0,0,5,28,49,70,93,116,139,
                                            162,185,205,227,250,270,290,310,
                                            332,355,376,400,424,448,474,500,
                                            525,549,575,600,625,650,675};
 //------------------ END current sensor calibration ---------------------------------------------------------------------
 
 //---------------- savings consts for displays 
-const int gascost=350; // in cents per gallon
-const int mpg=25; // mpg of the gasoline car
-const int ecost=12; // in cents per kWhr
-const int whpermile=300; // energy efficiency of the ecar
+const int PROGMEM gascost=350; // in cents per gallon
+const int PROGMEM mpg=25; // mpg of the gasoline car
+const int PROGMEM ecost=12; // in cents per kWhr
+const int PROGMEM whpermile=300; // energy efficiency of the ecar
 int savingsPerKWH; // will be recalced later
 //---------------- end of the energy constants
 
 //---------------- pin-out constants ----------------
 //---------------- analog inputs
-const byte pin_pV=0; // pilot signal sensed through a 3-element divider 
-const byte pin_V=1; // input voltage 
-const byte pin_C=2; // AC current - as measured by the current transformer
-const byte pin_throttle=3; // wired to a trimpot on a board
+const byte PROGMEM pin_pV=0; // pilot signal sensed through a 3-element divider 
+const byte PROGMEM pin_V=1; // input voltage 
+const byte PROGMEM pin_C=2; // AC current - as measured by the current transformer
+const byte PROGMEM pin_throttle=3; // wired to a trimpot on a board
 // pins A4 / A5 reserved for SPI comms to RTC chip
 
 //---------------- digital inputs / outputs
 // GFI trip pin - goes high on GFI fault, driven by the specialized circuit based on LM1851 
 // has to be pin 3 as only pin 2 and 3 are available for interrupts on Pro Mini
-const byte pin_GFI=3; 
-const byte pin_inRelay=5; 
-const byte pin_PWM=9; // J pilot PWM pin
+const byte PROGMEM pin_GFI=3; 
+const byte PROGMEM pin_inRelay=5; 
+const byte PROGMEM pin_PWM=9; // J pilot PWM pin
 
-const byte pin_StatusLight=10;
+const byte PROGMEM pin_StatusLight=10;
 
-const byte pin_GFItest=12; // pin wired to a GFCI-tripping relay - for the periodic testing of the GFCI circuit & stuck relay detection
+const byte PROGMEM pin_GFItest=12; // pin wired to a GFCI-tripping relay - for the periodic testing of the GFCI circuit & stuck relay detection
 //---------------- END PINOUTS -----------------------
 
 //---------------- Status Light Levels ---------------
-const byte status_Off=0;
-const byte status_Low=64;
-const byte status_Mid=128;
-const byte status_Full=255;
+const byte PROGMEM status_Off=0;
+const byte PROGMEM status_Low=64;
+const byte PROGMEM status_Mid=128;
+const byte PROGMEM status_Full=255;
 //---------------- End Status Light Levels -----------------------
 
 //==================================== calibration constants etc
-const float Aref=5.; // should be close
+const float PROGMEM Aref=5.; // should be close
 float pV_min=-12.;
 float V_J1772_pin_=0; // global pilot voltage
-const float divider_pV_R=100./27.; // 100k over 27k
+const float PROGMEM divider_pV_R=100./27.; // 100k over 27k
 float V_Ard_pin_0;
 //===============================================================
 
 //========== define J1772 states ===============================
 // defaults
-const float def_state_A_Vmin=10.5, def_state_A_Vmax=14; 
-const float def_state_B_Vmin=7.5, def_state_B_Vmax=10.5; 
-const float def_state_C_Vmin=4.5, def_state_C_Vmax=7.5; 
-const float def_state_D_Vmin=1.5, def_state_D_Vmax=4.5; 
-const float def_state_E_Vmin=-1.5, def_state_E_Vmax=1.5; 
-const float def_state_F_Vmin=-14., def_state_F_Vmax=-10.; 
+const float PROGMEM def_state_A_Vmin=10.5, def_state_A_Vmax=14; 
+const float PROGMEM def_state_B_Vmin=7.5, def_state_B_Vmax=10.5; 
+const float PROGMEM def_state_C_Vmin=4.5, def_state_C_Vmax=7.5; 
+const float PROGMEM def_state_D_Vmin=1.5, def_state_D_Vmax=4.5; 
+const float PROGMEM def_state_E_Vmin=-1.5, def_state_E_Vmax=1.5; 
+const float PROGMEM def_state_F_Vmin=-14., def_state_F_Vmax=-10.; 
 // now adjusted for the actual voltages
 float state_A_Vmin, state_A_Vmax; 
 float state_B_Vmin, state_B_Vmax; 
@@ -146,22 +165,22 @@ float state_F_Vmin, state_F_Vmax;
 
 // these should be global vars  -----------------------------
 unsigned int duty=0, set_duty=0;
-const unsigned int PWM_res=1024;
-const unsigned int PWM_FULLON=1024;
-const unsigned int MAXDUTY=970; // <97% to stay in AC charging zone for J1772 standard
+const unsigned int PROGMEM PWM_res=1024;
+const unsigned int PROGMEM PWM_FULLON=1024;
+const unsigned int PROGMEM MAXDUTY=970; // <97% to stay in AC charging zone for J1772 standard
 
 int sawTemp = 0;
 float lastTemp = 0;
 int loopMessageShown = 0;
 
-const float maxC=60; // max rated current
+const float PROGMEM maxC=60; // max rated current
 float inV_AC=0; // this will be measured
-const float nominal_outC_240V=30; // 30A by default from a 240VAC line
-const float nominal_outC_120V=15; // 15A by default from a 120VAC line
+const float PROGMEM nominal_outC_240V=30; // 30A by default from a 240VAC line
+const float PROGMEM nominal_outC_120V=15; // 15A by default from a 120VAC line
 float outC=nominal_outC_240V; 
 float power=0;
 float energy=0; // how much energy went through - in kWHrs 
-#define TEMP_STRING_LEN 100
+#define TEMP_STRING_LEN 12
 char tempstr[TEMP_STRING_LEN]; // scratchpad for text operations
 
 byte GFI_tripped=0;
@@ -186,7 +205,8 @@ const byte meas_cycle_delay=100; // in ms
 // initialize the clock - assume no RTC and that we are getting turned on at the hour
 //byte day=5, hour=12, mins=0; // default day is Sat, time is noon, 0 min
 //------------ end timing params ---------------------------
-#define tracer(x) Serial.println(x);delay(1000);
+//#define tracer(x) Serial.println(x);delay(200);
+#define tracer(x)
 
 void setup() {
   wdt_disable();
@@ -295,27 +315,31 @@ void setup() {
   // set watchdog - http://tushev.org/articles/arduino/item/46-arduino-and-watchdog-timer, http://www.nongnu.org/avr-libc/user-manual/group__avr__watchdog.html
 //  wdt_enable(WDTO_8S); // longest is 8S
   
-//  tracer("Before Display");
-//
-//  // Initialize Display
-//  // by default, we'll generate the high voltage from the 3.3v line internally! (neat!)
-//  display.begin(SSD1306_SWITCHCAPVCC, 0x3c);  // initialize with the I2C addr 0x3D (for the 128x64)
-//
-//  display.clearDisplay();
-//  display.setTextSize(1);
-//  display.setTextColor(WHITE);
-//  // display init done
+  tracer("Before Display");
+
+#ifdef ADAFRUIT
+  // Initialize Display
+  // by default, we'll generate the high voltage from the 3.3v line internally! (neat!)
+  display.begin(SSD1306_SWITCHCAPVCC, 0x3c);  // initialize with the I2C addr 0x3D (for the 128x64)
+
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(WHITE);
+  // display init done
+#endif
   
   tracer("Before RTC");
   // Initialize RTC
   //setSyncProvider() causes the Time library to synchronize with the
   //external RTC by calling RTC.get() every five minutes by default.
+#ifdef DS3232RTC_DEFINE
   setSyncProvider(RTC.get);
-  Serial.print("RTC Sync");
-  if (timeStatus() != timeSet) Serial.print(" FAIL!");
-  Serial.println("");
+  ps("RTC Sync");
+  if (timeStatus() != timeSet) psln(" FAIL!");
+  psln("");
   // rtc init done
   tracer("After RTC");
+#endif
   
   // initialize in state A - EVSE ready
   setPilot(PWM_FULLON);
@@ -334,6 +358,7 @@ void loop() {
   }
 
 
+#ifdef DS3232RTC_DEFINE
   static time_t tLast;
   time_t t;
   tmElements_t tm;
@@ -347,12 +372,12 @@ void loop() {
           float f = c * 9. / 5. + 32.;
           lastTemp = f;
           sawTemp = 1;
-          Serial.print(f);
-          Serial.print("F ");
+          ps(f);
+          ps("F ");
       }
-      Serial.println(" ");
+      psln(" ");
   }
-  
+#endif  
   // reset GFI trip status so we can retry after GFI timeout
   // GFI is checked in the end of this cycle - by that time, a few hundreds ms pass
   GFI_tripped=0; 
@@ -363,13 +388,13 @@ void loop() {
   
   // manage state changes
   if(state!=prev_state) {
-    Serial.print("Change state: ");
-    Serial.println(state);
+    ps("Change state: ");
+    psln(state);
     timer=millis(); // start timer
     timer0=timer; // remember the start of charge
     
     if(state==STATE_C) {
-      Serial.println("Starting Charge State");
+      psln("Starting Charge State");
       // entering charging state - check for diode
       setPilot(PWM_FULLON/2);
       if(read_pV()>-1.5) {
@@ -393,13 +418,18 @@ void loop() {
     
   if(state==STATE_B) {
     setRelay(LOW); // relay off
+#ifdef DS3232RTC_DEFINE
     int currentHour = hour(t);
     int currentMin = minute(t);
+#else
+    int currentHour = 1;
+    int currentMin = 1;
+#endif
     if (currentHour >= 0 && currentMin < 5) {
       setPilot(PWM_FULLON);
-      Serial.println("Waiting till 6pm to start charging");    
+      psln("Waiting till 6pm to start charging");    
     } else {
-      Serial.println("Sending back charge okay");
+      psln("Sending back charge okay");
       setOutC();
       setPilot(duty);
     }
@@ -420,15 +450,15 @@ void loop() {
 
     // print real-time stats
     snprintf(tempstr, TEMP_STRING_LEN, "Power: %d.%01d KW  ", int(power), int(power*10)%10);
-    Serial.println(tempstr);
+    psln(tempstr);
     snprintf(tempstr, TEMP_STRING_LEN, "Time: %d min  ", int((timer-timer0)/1000)/60); 
-    Serial.println(tempstr);
+    psln(tempstr);
     // also show energy cost in this one
     // use US average cost per http://www.eia.gov/electricity/monthly/epm_table_grapher.cfm?t=epmt_5_6_a - $0.12/kwhr
     snprintf(tempstr, TEMP_STRING_LEN, "%d.%01d KWH ($%d.%02d) ", int(energy), int(energy*10)%10, int(energy/8), int(energy/8*100)%100 ); 
-    Serial.println(tempstr);
+    psln(tempstr);
     snprintf(tempstr, TEMP_STRING_LEN, "%dV, %dA (%d) ", int(inV_AC), int(outC_meas), int(outC)); 
-    Serial.println(tempstr);
+    psln(tempstr);
         
   } // end state_C
   
@@ -438,7 +468,7 @@ void loop() {
   }
   
   if(state==STATE_E || state==STATE_F || state==STATE_INVALID) {
-    Serial.println("Abnormal State!");
+    psln("Abnormal State!");
     setRelay(LOW); // relay off
   }  
           
@@ -448,7 +478,7 @@ void loop() {
       // need this here so we have an echo on user input
       setOutC(); 
       snprintf(tempstr, TEMP_STRING_LEN, "%dV, %dA", int(inV_AC), int(outC));
-      Serial.println(tempstr);  
+      psln(tempstr);  
     }
 
   delay(meas_cycle_delay); // reasonable delay for screen refresh
@@ -456,11 +486,11 @@ void loop() {
 #ifdef GFI
   // check GFI flag (if a trip is detected, this flag would be set via the special interrupt)
   if(GFI_tripped) {
-    Serial.println("GFI tripped!\nRetrying in 15 min...");
+    psln("GFI tripped!\nRetrying in 15 min...");
     GFI_trip_count++; // allowed max of 4; if more than 4, need 2 user inputs to override
     if(GFI_trip_count>4) {
       // wait for user to unplug; since the user then will have to re-plug to re-energize the system, this can be considered 2 actions
-      Serial.println("4th GFI trip!\nUnplug / re-plug\nto resume");
+      psln("4th GFI trip!\nUnplug / re-plug\nto resume");
       while(getState()!=STATE_A);
     }  
   }
@@ -548,6 +578,9 @@ int getState() {
   if(pV>state_D_Vmin && pV<=state_D_Vmax) return STATE_D;
   if(pV>state_E_Vmin && pV<=state_E_Vmax) return STATE_E;
   if(pV>state_F_Vmin && pV<=state_F_Vmax) return STATE_F;
+
+  ps("no valid state: ");
+  psln(pV);
 
   return STATE_INVALID;
 }
@@ -655,25 +688,30 @@ float read_C() {
 //print date and time to Serial
 void printDateTime(unsigned long t)
 {
+
     printDate(t);
-    Serial.print(" ");
+    ps(" ");
     printTime(t);
 }
 
 //print time to Serial
 void printTime(unsigned long t)
 {
+#ifdef DS3232RTC_DEFINE
     printI00(hour(t), ':');
     printI00(minute(t), ':');
     printI00(second(t), ' ');
+#endif
 }
 
 //print date to Serial
 void printDate(unsigned long t)
 {
+#ifdef DS3232RTC_DEFINE
     printI00(day(t), 0);
-    Serial.print(monthShortStr(month(t)));
-    Serial.print(year(t));
+    ps(monthShortStr(month(t)));
+    ps(year(t));
+#endif
 }
 
 //Print an integer in "00" format (with  eading zero),
@@ -681,9 +719,9 @@ void printDate(unsigned long t)
 //Input value assumed to be between 0 and 99.
 void printI00(int val, char delim)
 {
-    if (val < 10) Serial.print("0");
-    Serial.print(val);
-    if (delim > 0) Serial.print(delim);
+    if (val < 10) ps("0");
+    ps(val);
+    if (delim > 0) ps(delim);
     return;
 }
 
