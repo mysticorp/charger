@@ -45,7 +45,7 @@ const int PROGMEM V_AC_sensitivity=180; // normally 180 (empirical)
 //------------------------------- END MAIN SWITCHES ------------------------------
 #define ADAFRUIT
 #define DS3232RTC_DEFINE
-#define SERIAL_PRINTS
+//#define SERIAL_PRINTS
 
 #ifdef SERIAL_PRINTS
 #define ps(x) Serial.print(x);
@@ -54,6 +54,9 @@ const int PROGMEM V_AC_sensitivity=180; // normally 180 (empirical)
 #define ps(x)
 #define psln(x)
 #endif
+
+#define pit(x) snprintf(tempstr, TEMP_STRING_LEN, x);display.print(tempstr); ps(tempstr)
+#define pitln(x) snprintf(tempstr, TEMP_STRING_LEN, x);display.println(tempstr); psln(tempstr)
 
 #include <Arduino.h>
 #include <avr/interrupt.h>
@@ -170,7 +173,6 @@ const unsigned int PROGMEM MAXDUTY=970; // <97% to stay in AC charging zone for 
 
 int sawTemp = 0;
 float lastTemp = 0;
-int loopMessageShown = 0;
 
 const float PROGMEM maxC=60; // max rated current
 float inV_AC=0; // this will be measured
@@ -325,6 +327,8 @@ void setup() {
   display.setTextSize(1);
   display.setTextColor(WHITE);
   // display init done
+  display.println("Init!");
+  display.display();
 #endif
   
   tracer("Before RTC");
@@ -336,8 +340,9 @@ void setup() {
   ps("RTC Sync");
   if (timeStatus() != timeSet) {
     psln(" FAIL!");
+  } else {
+    psln(" Success!!");
   }
-  psln("");
   // rtc init done
   tracer("After RTC");
 #endif
@@ -349,16 +354,9 @@ void setup() {
 
 }
 
-
 //============================================= MAIN LOOP ============================================
 void loop() {
   
-  if (loopMessageShown < 1) {
-    tracer("Start of Loop(2)");
-    loopMessageShown = 1;
-  }
-
-
 #ifdef DS3232RTC_DEFINE
   static time_t tLast;
   time_t t;
@@ -367,16 +365,22 @@ void loop() {
   if (t != tLast) {
       tLast = t;
       printDateTime(t);
+      displayDateTime(t);
       if (second(t) == 0 || sawTemp == 0) {
           float c = RTC.temperature() / 4.;
           float f = c * 9. / 5. + 32.;
           lastTemp = f;
           sawTemp = 1;
-          ps(f);
-          ps("F ");
       }
-      psln(" ");
+      display.setTextSize(2);
+      displayState();
+      if (sawTemp) {
+        display.print(lastTemp);
+        display.println(" F");
+      }  
+      display.display();
   }
+
 #endif  
   // reset GFI trip status so we can retry after GFI timeout
   // GFI is checked in the end of this cycle - by that time, a few hundreds ms pass
@@ -403,7 +407,7 @@ void loop() {
       energy=0; // reset energy counter for this cycle  
     }
   } // end state transition check
-
+  
   if(state!=STATE_C) {
     analogWrite(pin_StatusLight, status_Mid);
   } else {
@@ -425,10 +429,12 @@ void loop() {
     int currentHour = 1;
     int currentMin = 1;
 #endif
-    if (currentHour >= 0 && currentMin < 5) {
+    if (currentHour >= 17 && currentHour < 21) {
       setPilot(PWM_FULLON);
-      psln("Waiting till 6pm to start charging");    
+      pitln("WAIT");
+      psln("Waiting till 5 pm to start charging");    
     } else {
+      pitln("CHARGE");
       psln("Sending back charge okay");
       setOutC();
       setPilot(duty);
@@ -448,6 +454,9 @@ void loop() {
     timer=millis();
     energy+=power*delta/1000/3600; 
 
+    snprintf(tempstr, TEMP_STRING_LEN, "%d min", int((timer-timer0)/1000)/60);
+    pitln(tempstr);
+#ifdef SERIAL_PRINTS
     // print real-time stats
     snprintf(tempstr, TEMP_STRING_LEN, "Power: %d.%01d KW  ", int(power), int(power*10)%10);
     psln(tempstr);
@@ -459,6 +468,7 @@ void loop() {
     psln(tempstr);
     snprintf(tempstr, TEMP_STRING_LEN, "%dV, %dA (%d) ", int(inV_AC), int(outC_meas), int(outC)); 
     psln(tempstr);
+#endif
         
   } // end state_C
   
@@ -571,6 +581,11 @@ int getState() {
   // pV=pV_min*(1-duty)+pV_max*duty
   // so pV_max=(pV-pV_min*(1-duty))/duty
   if(mode==1) pV=((pV-pV_min)*PWM_res+pV_min*duty)/duty;
+
+  Serial.print("-v: ");
+  Serial.println(pV);
+  display.print("-v: ");
+  display.println(pV);
   
   if(pV>state_A_Vmin && pV<=state_A_Vmax) return STATE_A;
   if(pV>state_B_Vmin && pV<=state_B_Vmax) return STATE_B;
@@ -704,3 +719,42 @@ void printI00(int val, char delim)
     return;
 }
 
+void displayState()
+{
+  pit("State ");
+  if (state == STATE_A) {
+    pitln("A");
+  } else if (state == STATE_B) {
+    pitln("B");
+  } else if (state == STATE_C) {
+    pitln("C");
+  } else if (state == STATE_D) {
+    pitln("D");
+  } else {
+    pitln("??");
+  }
+}
+
+void displayDateTime(unsigned long t)
+{
+  display.clearDisplay();
+  display.setCursor(0,0);
+  display.setTextSize(1);
+  displayI00(hour(t), ':');
+  displayI00(minute(t), ':');
+  displayI00(second(t), ' ');
+  displayI00(day(t), ' ');
+  display.print(monthShortStr(month(t)));
+  display.print(" ");
+  display.println(year(t));
+  display.println("--------------------");
+}
+
+void displayI00(int val, char delim)
+{
+    if (val < 10) display.print("0");
+    display.print(val,DEC);
+    if (delim > 0) display.print(delim);
+    return;
+
+}
