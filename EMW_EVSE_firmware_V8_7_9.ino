@@ -372,7 +372,11 @@ void loop() {
           lastTemp = f;
           sawTemp = 1;
       }
-      display.setTextSize(2);
+      if (state == STATE_B || state == STATE_C) {
+        display.setTextSize(1);
+      } else {
+        display.setTextSize(2);
+      }
       displayState();
       if (sawTemp) {
         display.print(lastTemp);
@@ -429,7 +433,7 @@ void loop() {
     int currentHour = 1;
     int currentMin = 1;
 #endif
-    if (currentHour >= 17 && currentHour < 21) {
+    if (chargeTimeValid(currentHour)) {
       setPilot(PWM_FULLON);
       pitln("WAIT");
       psln("Waiting till 5 pm to start charging");    
@@ -758,3 +762,13 @@ void displayI00(int val, char delim)
     return;
 
 }
+
+int chargeTimeValid(int hour)
+{
+  if (hour >= 0 && hour < 12) {
+    return 1;
+  }
+
+  return 0;
+}
+
