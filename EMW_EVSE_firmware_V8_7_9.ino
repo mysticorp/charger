@@ -71,7 +71,7 @@ const int V_AC_sensitivity=180; // normally 180 (empirical)
 
 // WiFi library mega slon
 #include <SoftwareSerial.h>
-#include <WiFlyHQ.h>
+//#include <WiFlyHQ.h>
 
 //-------------------- WiFi UDP settings --------------------------------------------------------------------
 const char UDPpacketEndSig[2]="\n"; // what is the signature of the packet end (should match the WiFly setting)
